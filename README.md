@@ -1,5 +1,10 @@
 # Tely's Barter Shops
 
+## 0.8.2
+
+- Offer and counteroffer windows close automatically after successful submission.
+- Final acceptance clears negotiation drafts and refreshes shop inventory after the automated exchange.
+
 ## 0.8.1
 
 - Player negotiations show offerable shop items and barter currencies without revealing quantities.

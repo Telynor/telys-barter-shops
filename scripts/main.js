@@ -176,9 +176,10 @@ function notifyResult(userId, ok, message) {
 }
 
 function sendRequest(message) {
-  if (!game.users.activeGM) return ui.notifications.error("A Game Master must be connected to process shop transactions.");
+  if (!game.users.activeGM) { ui.notifications.error("A Game Master must be connected to process shop transactions."); return false; }
   if (game.users.activeGM.id === game.user.id) gmMessage(message);
   else game.socket.emit(`module.${MODULE_ID}`, message);
+  return true;
 }
 
 let transactionQueue = Promise.resolve();
@@ -534,6 +535,7 @@ async function handleTradeDecision(message, decision) {
   shop.trades = shop.trades.filter(t => t.id !== trade.id);
   await saveShops(all);
   notifyResult(trade.userId, true, `${shop.name} accepted the trade for ${saleLines.map(s => `${s.line.quantity} × ${s.line.name}`).join(", ")}.`);
+  game.socket.emit(`module.${MODULE_ID}`, { action: "tradeComplete", userId: trade.userId, shopId: shop.id });
 }
 
 async function gmMessage(message) {
@@ -552,11 +554,14 @@ async function gmMessage(message) {
       if (message.action === "acceptTrade") await handleTradeDecision(message, "accept");
       if (message.action === "rejectTrade") await handleTradeDecision(message, "reject");
       if (message.action === "abandonTrade") await handleTradeDecision(message, "abandon");
+      return true;
     } catch (error) {
       console.error(`${MODULE_ID} | Transaction failed`, error);
       notifyResult(message.userId, false, error.message);
+      return false;
     }
   });
+  return transactionQueue;
 }
 
 class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
@@ -631,7 +636,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
   static openSell() { this.mode = "sell"; this.render({ force: true }); }
   static backToShop() { this.mode = "shop"; this.render({ force: true }); }
   static clearSellItem() { this.sellDraft = null; this.render({ force: true }); }
-  static acceptCounter() { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.userId === game.user.id); if (trade) sendRequest({ action: "acceptTrade", userId: game.user.id, shopId: this.shopId, tradeId: trade.id }); }
+  static acceptCounter() { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.userId === game.user.id); if (trade && sendRequest({ action: "acceptTrade", userId: game.user.id, shopId: this.shopId, tradeId: trade.id })) { this.sellDraft = null; this.offerDrafts.clear(); this.close(); } }
   static reviseCounter() { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.userId === game.user.id); if (trade) sendRequest({ action: "reviseTrade", userId: game.user.id, shopId: this.shopId, tradeId: trade.id }); }
   static submitTrade(event, target) {
     const actor = actorForUser(game.user); const shop = shops().find(s => s.id === this.shopId);
@@ -644,7 +649,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
     const quantity = Math.max(1, Math.floor(number(root.querySelector("[data-sell-quantity]")?.value, 1)));
     const gold = Math.max(0, Math.floor(number(root.querySelector("[data-ask-gold]")?.value, 0)));
     const items = [...root.querySelectorAll("[data-ask-shop-item]")].map(input => ({ source: input.dataset.offerSource, ...(input.dataset.offerSource === "shop" ? { reserveId: input.dataset.askShopItem } : { listingId: input.dataset.askShopItem }), quantity: Math.max(0, Math.floor(number(input.value, 0))) })).filter(i => i.quantity > 0);
-    sendRequest({ action: "submitTrade", userId: game.user.id, actorId: actor.id, actorUuid: actor.uuid, shopId: shop.id, tradeId: trade?.id ?? null, itemId: item.id, quantity, gold, items });
+    if (sendRequest({ action: "submitTrade", userId: game.user.id, actorId: actor.id, actorUuid: actor.uuid, shopId: shop.id, tradeId: trade?.id ?? null, itemId: item.id, quantity, gold, items })) { this.sellDraft = null; this.close(); }
   }
   static submitPlayerCounter(event, target) {
     const actor = actorForUser(game.user); const shop = shops().find(s => s.id === this.shopId);
@@ -654,7 +659,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
     const sellerItems = [...root.querySelectorAll("[data-player-seller-item]")].map(input => ({ itemId: input.dataset.playerSellerItem, name: input.dataset.name, quantity: Math.max(0, Math.floor(number(input.value, 0))) })).filter(i => i.quantity > 0);
     const gold = Math.max(0, Math.floor(number(root.querySelector("[data-player-counter-gold]")?.value, 0)));
     const items = [...root.querySelectorAll("[data-player-shop-item]")].map(input => ({ source: input.dataset.offerSource, ...(input.dataset.offerSource === "shop" ? { reserveId: input.dataset.playerShopItem } : { listingId: input.dataset.playerShopItem }), quantity: Math.max(0, Math.floor(number(input.value, 0))) })).filter(i => i.quantity > 0);
-    sendRequest({ action: "playerCounterTrade", userId: game.user.id, shopId: shop.id, tradeId: trade.id, sellerItems, gold, items });
+    if (sendRequest({ action: "playerCounterTrade", userId: game.user.id, shopId: shop.id, tradeId: trade.id, sellerItems, gold, items })) { this.sellDraft = null; this.close(); }
   }
   static abandonTrade() {
     const actor = actorForUser(game.user); const shop = shops().find(s => s.id === this.shopId);
@@ -773,9 +778,9 @@ class ShopManager extends HandlebarsApplicationMixin(ApplicationV2) {
   static async removeCurrency(event, target) { const all = shops(); const shop = all.find(s => s.id === this.shopId); shop.till.items = shop.till.items.filter(i => i.id !== target.dataset.currencyId); await saveShops(all); this.render({ force: true }); }
   static acceptOffer(event, target) { const offer = shops().find(s => s.id === this.shopId)?.offers.find(o => o.id === target.dataset.offerId); if (offer) gmMessage({ action: "acceptOffer", userId: offer.userId, shopId: this.shopId, offerId: offer.id }); }
   static denyOffer(event, target) { const offer = shops().find(s => s.id === this.shopId)?.offers.find(o => o.id === target.dataset.offerId); if (offer) gmMessage({ action: "denyOffer", userId: offer.userId, shopId: this.shopId, offerId: offer.id }); }
-  static acceptTrade(event, target) { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.id === target.dataset.tradeId); if (trade) gmMessage({ action: "acceptTrade", userId: trade.userId, shopId: this.shopId, tradeId: trade.id }); }
+  static async acceptTrade(event, target) { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.id === target.dataset.tradeId); if (trade && await gmMessage({ action: "acceptTrade", userId: trade.userId, shopId: this.shopId, tradeId: trade.id })) this.close(); }
   static rejectTrade(event, target) { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.id === target.dataset.tradeId); if (trade) gmMessage({ action: "rejectTrade", userId: trade.userId, shopId: this.shopId, tradeId: trade.id }); }
-  static counterTrade(event, target) { const card = target.closest("[data-trade-card]"); const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.id === target.dataset.tradeId); if (!card || !trade) return; const gold = Math.max(0, Math.floor(number(card.querySelector("[data-counter-gold]")?.value, 0))); const reserveItems = [...card.querySelectorAll("[data-counter-reserve]")].map(i => ({ source: "shop", reserveId: i.dataset.counterReserve, name: i.dataset.name, quantity: number(i.value) })).filter(i => i.quantity > 0); const listingItems = [...card.querySelectorAll("[data-counter-listing]")].map(i => ({ source: "listing", listingId: i.dataset.counterListing, name: i.dataset.name, quantity: number(i.value) })).filter(i => i.quantity > 0); const sellerItems = [...card.querySelectorAll("[data-counter-seller-item]")].map(i => ({ itemId: i.dataset.counterSellerItem, name: i.dataset.name, quantity: number(i.value) })).filter(i => i.quantity > 0); gmMessage({ action: "counterTrade", userId: trade.userId, shopId: this.shopId, tradeId: trade.id, gold, items: [...reserveItems, ...listingItems], sellerItems }); }
+  static async counterTrade(event, target) { const card = target.closest("[data-trade-card]"); const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.id === target.dataset.tradeId); if (!card || !trade) return; const gold = Math.max(0, Math.floor(number(card.querySelector("[data-counter-gold]")?.value, 0))); const reserveItems = [...card.querySelectorAll("[data-counter-reserve]")].map(i => ({ source: "shop", reserveId: i.dataset.counterReserve, name: i.dataset.name, quantity: number(i.value) })).filter(i => i.quantity > 0); const listingItems = [...card.querySelectorAll("[data-counter-listing]")].map(i => ({ source: "listing", listingId: i.dataset.counterListing, name: i.dataset.name, quantity: number(i.value) })).filter(i => i.quantity > 0); const sellerItems = [...card.querySelectorAll("[data-counter-seller-item]")].map(i => ({ itemId: i.dataset.counterSellerItem, name: i.dataset.name, quantity: number(i.value) })).filter(i => i.quantity > 0); if (await gmMessage({ action: "counterTrade", userId: trade.userId, shopId: this.shopId, tradeId: trade.id, gold, items: [...reserveItems, ...listingItems], sellerItems })) this.close(); }
   static abandonTrade(event, target) { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.id === target.dataset.tradeId); if (trade) gmMessage({ action: "abandonTrade", userId: trade.userId, shopId: this.shopId, tradeId: trade.id }); }
   static async save() {
     const form = this.element.querySelector("form"); const fd = new FormData(form); const all = shops(); const shop = all.find(s => s.id === this.shopId); if (!shop) return;
@@ -802,6 +807,9 @@ Hooks.once("init", () => {
 Hooks.once("ready", () => {
   game.socket.on(`module.${MODULE_ID}`, message => {
     if (message.action === "result" && message.userId === game.user.id) ui.notifications[message.ok ? "info" : "error"](message.message);
+    else if (message.action === "tradeComplete" && message.userId === game.user.id) {
+      for (const app of ApplicationV2.instances()) if (app instanceof ShopBrowser && app.shopId === message.shopId) { app.sellDraft = null; app.offerDrafts.clear(); app.mode = "shop"; app.render({ force: true }); }
+    }
     else if (message.action === "tradePrompt" && message.userId === game.user.id) { if (message.message) ui.notifications.info(message.message); openPlayerTrade(message.shopId); }
     else gmMessage(message);
   });
