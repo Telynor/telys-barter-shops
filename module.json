@@ -2,7 +2,7 @@
   "id": "telys-barter-shops",
   "title": "Tely's Barter Shops",
   "description": "Player-accessible item barter and currency shops for Foundry VTT.",
-  "version": "0.7.7",
+  "version": "0.8.0",
   "authors": [{ "name": "Telynor" }],
   "compatibility": { "minimum": "14", "verified": "14" },
   "relationships": {
@@ -13,5 +13,5 @@
   "socket": true,
   "languages": [{ "lang": "en", "name": "English", "path": "lang/en.json" }],
   "manifest": "https://github.com/Telynor/telys-barter-shops/releases/latest/download/manifest.json",
-  "download": "https://github.com/Telynor/telys-barter-shops/releases/download/v0.7.7/telys-barter-shops.zip"
+  "download": "https://github.com/Telynor/telys-barter-shops/releases/download/v0.8.0/telys-barter-shops.zip"
 }

@@ -1,5 +1,11 @@
 # Tely's Barter Shops
 
+## 0.8.0
+
+- Player counteroffers now reopen with the GM's latest terms and allow further edits.
+- Counteroffers can include items from the shop's public inventory.
+- Merchant gold and custom-currency reserves are visible only to the GM.
+
 A Foundry Virtual Tabletop v14 module for D&D 5e that creates player-facing shops with item barter, normal character currency, stock, markup, buyback, access controls, and a resizable tile-based storefront.
 
 ## Install
