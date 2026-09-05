@@ -23,7 +23,6 @@ function openManagerTrade(shopId) {
   const app = existing ?? new ShopManager({ shopId });
   app.shopId = shopId;
   app.render({ force: true });
-  app.bringToFront?.();
 }
 
 function openPlayerTrade(shopId) {
@@ -32,7 +31,6 @@ function openPlayerTrade(shopId) {
   app.shopId = shopId;
   app.mode = "sell";
   app.render({ force: true });
-  app.bringToFront?.();
 }
 
 function blankShop() {
@@ -104,7 +102,12 @@ async function addItemQuantity(actor, source, amount) {
   const signature = `${String(source.name).trim()}|${String(source.type).trim()}`.toLowerCase();
   const existing = actor.items.find(i => `${i.name.trim()}|${i.type.trim()}`.toLowerCase() === signature);
   if (existing && quantityPath(existing)) {
-    await existing.update({ "system.quantity": itemQuantity(existing) + amount });
+    const update = { "system.quantity": itemQuantity(existing) + amount };
+    const price = foundry.utils.getProperty(source, "system.price.value");
+    const denomination = foundry.utils.getProperty(source, "system.price.denomination");
+    if (Number.isFinite(Number(price))) update["system.price.value"] = Number(price);
+    if (denomination) update["system.price.denomination"] = denomination;
+    await existing.update(update);
   } else {
     const data = clone(source);
     const sourceUuid = data.uuid ?? "";
@@ -116,6 +119,15 @@ async function addItemQuantity(actor, source, amount) {
     const created = await actor.createEmbeddedDocuments("Item", [data], { keepId: false });
     if (!created?.length) throw new Error("Foundry did not create the purchased item.");
   }
+}
+
+function sourceWithPrice(source, value, denomination = "gp") {
+  const data = clone(source);
+  data.system ??= {};
+  if (!data.system.price || typeof data.system.price !== "object") data.system.price = {};
+  data.system.price.value = Math.max(1, Math.ceil(number(value, 0)));
+  data.system.price.denomination = denomination || "gp";
+  return data;
 }
 
 function tillItem(shop, cost) {
@@ -172,12 +184,16 @@ async function handlePurchase(message) {
   const payment = allowed === "both" ? String(message.payment || "barter") : allowed;
   if (!(["barter", "currency"].includes(payment)) || (allowed !== "both" && payment !== allowed)) throw new Error("That payment method is not allowed for this listing.");
   let refund = null;
+  let deliveredPrice = 1;
+  let deliveredDenomination = "gp";
   if (payment === "currency") {
     const total = Math.ceil(number(listing.cost.amount) * number(shop.markup, 1) * count);
     if (!affordableCurrency(actor, listing.cost.denomination, total)) throw new Error("You cannot afford that purchase.");
     const current = number(foundry.utils.getProperty(actor, `system.currency.${listing.cost.denomination}`));
     await actor.update({ [`system.currency.${listing.cost.denomination}`]: current - total });
     shop.till.currency[listing.cost.denomination] = number(shop.till.currency[listing.cost.denomination]) + total;
+    deliveredPrice = number(listing.cost.amount) * number(shop.markup, 1) / Math.max(1, number(listing.bundle, 1));
+    deliveredDenomination = listing.cost.denomination || "gp";
     refund = async () => {
       const balance = number(foundry.utils.getProperty(actor, `system.currency.${listing.cost.denomination}`));
       await actor.update({ [`system.currency.${listing.cost.denomination}`]: balance + total });
@@ -190,6 +206,8 @@ async function handlePurchase(message) {
     const available = matches.reduce((sum, item) => sum + itemQuantity(item), 0);
     if (available < needed) throw new Error(`${actor.name} needs ${needed} × ${listing.cost.name}, but only ${available} were found.`);
     const paidSource = matches[0];
+    deliveredPrice = number(foundry.utils.getProperty(paidSource, "system.price.value"), 1) * number(listing.cost.quantity, 1) * number(shop.markup, 1) / Math.max(1, number(listing.bundle, 1));
+    deliveredDenomination = foundry.utils.getProperty(paidSource, "system.price.denomination") || "gp";
     const refundSource = { ...itemSource(paidSource), uuid: listing.cost.uuid || paidSource.uuid };
     await removeItemQuantity(actor, matches, needed);
     addToTill(shop, listing.cost, needed, paidSource);
@@ -200,7 +218,7 @@ async function handlePurchase(message) {
     };
   }
   try {
-    await addItemQuantity(actor, listing.item, number(listing.bundle, 1) * count);
+    await addItemQuantity(actor, sourceWithPrice(listing.item, deliveredPrice, deliveredDenomination), number(listing.bundle, 1) * count);
   } catch (error) {
     await refund?.();
     throw error;
@@ -292,7 +310,9 @@ async function handleOfferDecision(message, accepted) {
   for (const deduction of deductions) await removeItemQuantity(actor, [deduction.item], deduction.quantity);
   if (offer.gold > 0) await actor.update({ "system.currency.gp": goldBalance - offer.gold });
   try {
-    await addItemQuantity(actor, listing.item, number(listing.bundle, 1) * offer.requestedQuantity);
+    const offeredValue = deductions.reduce((sum, d) => sum + number(foundry.utils.getProperty(d.item, "system.price.value"), 0) * d.quantity, 0) + offer.gold;
+    const deliveredCount = Math.max(1, number(listing.bundle, 1) * offer.requestedQuantity);
+    await addItemQuantity(actor, sourceWithPrice(listing.item, offeredValue * number(shop.markup, 1) / deliveredCount, "gp"), deliveredCount);
   } catch (error) {
     for (const deduction of deductions) await addItemQuantity(actor, deduction.source, deduction.quantity);
     if (offer.gold > 0) await actor.update({ "system.currency.gp": goldBalance });
