@@ -142,6 +142,18 @@ function matchingListing(shop, source) {
   return shop.listings.find(l => (source.uuid && l.item?.uuid === source.uuid) || (String(l.item?.name ?? "").trim().toLowerCase() === name && String(l.item?.type ?? "").trim().toLowerCase() === type));
 }
 
+function addPurchasedStock(shop, source, quantity, salePrice, denomination = "gp") {
+  const listing = matchingListing(shop, source);
+  if (listing) {
+    if (listing.stock !== null) listing.stock = number(listing.stock) + quantity;
+    return listing;
+  }
+  const pricedSource = sourceWithPrice(source, salePrice, denomination);
+  const created = { id: uid(), item: pricedSource, bundle: 1, stock: quantity, payment: "currency", cost: { amount: Math.max(1, Math.ceil(number(salePrice, 1))), denomination: denomination || "gp", quantity: 1, name: "", type: "", uuid: "", img: "" } };
+  shop.listings.push(created);
+  return created;
+}
+
 function addToTill(shop, cost, quantity, source = null) {
   let entry = tillItem(shop, cost);
   if (!entry) {
@@ -249,10 +261,8 @@ async function handleSell(message) {
   const current = number(foundry.utils.getProperty(actor, `system.currency.${denomination}`));
   await actor.update({ [`system.currency.${denomination}`]: current + payout });
   shop.till.currency[denomination] = number(shop.till.currency[denomination]) - payout;
-  const resale = matchingListing(shop, soldSource);
-  if (resale) {
-    if (resale.stock !== null) resale.stock = number(resale.stock) + count;
-  } else shop.listings.push({ id: uid(), item: soldSource, bundle: 1, stock: count, payment: "currency", cost: { amount: Math.max(1, base), denomination, quantity: 1, name: "", type: "", uuid: "" } });
+  const salePrice = payout * number(shop.markup, 1) / count;
+  addPurchasedStock(shop, soldSource, count, salePrice, denomination);
   await saveShops(all);
   notifyResult(user.id, true, `Sold ${count} × ${item.name} for ${payout} ${denomination.toUpperCase()}.`);
 }
@@ -443,11 +453,11 @@ async function handleTradeDecision(message, decision) {
   }
   shop.till.currency.gp = number(shop.till.currency.gp) - trade.gold;
   for (const payout of payouts) payout.reserve.quantity = number(payout.reserve.quantity) - payout.asked.quantity;
+  const merchantSpend = trade.gold + payouts.reduce((sum, payout) => sum + number(foundry.utils.getProperty(payout.source, "system.price.value"), 0) * payout.asked.quantity, 0);
+  const purchasedUnits = saleLines.reduce((sum, sale) => sum + sale.line.quantity, 0);
+  const resalePrice = merchantSpend * number(shop.markup, 1) / Math.max(1, purchasedUnits);
   for (const sale of saleLines) {
-    const resale = matchingListing(shop, sale.source);
-    if (resale) {
-      if (resale.stock !== null) resale.stock = number(resale.stock) + sale.line.quantity;
-    } else shop.listings.push({ id: uid(), item: sale.source, bundle: 1, stock: sale.line.quantity, payment: "barter", cost: { amount: Math.max(1, number(foundry.utils.getProperty(sale.source, "system.price.value"), 1)), denomination: "gp", quantity: 1, name: "", type: "", uuid: "", img: "" } });
+    addPurchasedStock(shop, sale.source, sale.line.quantity, resalePrice, "gp");
   }
   shop.trades = shop.trades.filter(t => t.id !== trade.id);
   await saveShops(all);
