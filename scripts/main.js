@@ -130,7 +130,7 @@ function sendRequest(message) {
 let transactionQueue = Promise.resolve();
 async function handlePurchase(message) {
   const user = game.users.get(message.userId);
-  const actor = game.actors.get(message.actorId);
+  const actor = message.actorUuid ? await fromUuid(message.actorUuid) : game.actors.get(message.actorId);
   const all = shops();
   const shop = all.find(s => s.id === message.shopId);
   const listing = shop?.listings?.find(l => l.id === message.listingId);
@@ -182,7 +182,7 @@ async function handlePurchase(message) {
 
 async function handleSell(message) {
   const user = game.users.get(message.userId);
-  const actor = game.actors.get(message.actorId);
+  const actor = message.actorUuid ? await fromUuid(message.actorUuid) : game.actors.get(message.actorId);
   const all = shops();
   const shop = all.find(s => s.id === message.shopId);
   const item = actor?.items.get(message.itemId);
@@ -210,7 +210,7 @@ async function handleSell(message) {
 
 async function handleSubmitOffer(message) {
   const user = game.users.get(message.userId);
-  const actor = game.actors.get(message.actorId);
+  const actor = message.actorUuid ? await fromUuid(message.actorUuid) : game.actors.get(message.actorId);
   const all = shops();
   const shop = all.find(s => s.id === message.shopId);
   const listing = shop?.listings?.find(l => l.id === message.listingId);
@@ -230,7 +230,7 @@ async function handleSubmitOffer(message) {
   const gold = Math.max(0, Math.floor(number(message.gold, 0)));
   if (number(foundry.utils.getProperty(actor, "system.currency.gp")) < gold) throw new Error("You do not have that much gold.");
   if (!offeredItems.length && gold <= 0) throw new Error("A Best Offer must include at least one Item or some gold.");
-  shop.offers.push({ id: uid(), userId: user.id, actorId: actor.id, actorName: actor.name, listingId: listing.id, listingName: listing.item.name, listingImg: listing.item.img, requestedQuantity, items: offeredItems, gold, createdAt: Date.now() });
+  shop.offers.push({ id: uid(), userId: user.id, actorId: actor.id, actorUuid: actor.uuid, actorName: actor.name, listingId: listing.id, listingName: listing.item.name, listingImg: listing.item.img, requestedQuantity, items: offeredItems, gold, createdAt: Date.now() });
   await saveShops(all);
   notifyResult(user.id, true, `Best Offer submitted for ${listing.item.name}.`);
 }
@@ -246,7 +246,7 @@ async function handleOfferDecision(message, accepted) {
     notifyResult(offer.userId, false, `Your Best Offer for ${offer.listingName} was denied.`);
     return;
   }
-  const actor = game.actors.get(offer.actorId);
+  const actor = offer.actorUuid ? await fromUuid(offer.actorUuid) : game.actors.get(offer.actorId);
   const listing = shop.listings.find(l => l.id === offer.listingId);
   if (!actor || !listing) throw new Error("The buyer or listing no longer exists.");
   if (listing.stock !== null && number(listing.stock) < offer.requestedQuantity) throw new Error("The shop no longer has enough stock.");
@@ -350,7 +350,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
     const quantity = Math.max(1, shortcut || selected);
     if (listing.stock !== null && quantity > number(listing.stock)) return ui.notifications.warn(`Only ${listing.stock} remain in stock.`);
     const payment = card?.querySelector("[data-payment-select]")?.value || listing.payment;
-    sendRequest({ action: "purchase", userId: game.user.id, actorId: actor.id, shopId: this.shopId, listingId: target.dataset.listingId, quantity, payment });
+    sendRequest({ action: "purchase", userId: game.user.id, actorId: actor.id, actorUuid: actor.uuid, shopId: this.shopId, listingId: target.dataset.listingId, quantity, payment });
   }
   static removeOfferItem(event, target) {
     const draft = this.offerDrafts.get(target.dataset.listingId) ?? [];
@@ -368,7 +368,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
     const gold = Math.max(0, Math.floor(number(card?.querySelector("[data-offer-gold]")?.value, 0)));
     const draft = this.offerDrafts.get(listingId) ?? [];
     const items = draft.map(item => ({ itemId: item.itemId, name: item.name, quantity: Math.min(item.max, Math.max(1, Math.floor(number(card?.querySelector(`[data-offer-item-id="${item.itemId}"]`)?.value, 1)))) }));
-    sendRequest({ action: "submitOffer", userId: game.user.id, actorId: actor.id, shopId: this.shopId, listingId, quantity, gold, items });
+    sendRequest({ action: "submitOffer", userId: game.user.id, actorId: actor.id, actorUuid: actor.uuid, shopId: this.shopId, listingId, quantity, gold, items });
     this.offerDrafts.delete(listingId);
     this.render({ force: true });
   }
@@ -378,7 +378,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
     if (!actor || !item) return;
     const quantity = await DialogV2.prompt({ window: { title: `Sell ${item.name}` }, content: `<label>Quantity <input type="number" name="quantity" min="1" max="${itemQuantity(item)}" value="1"></label>`, ok: { label: "Sell", callback: (event, button, dialog) => number(new FormData(dialog.form).get("quantity"), 1) } });
     if (!quantity) return;
-    sendRequest({ action: "sell", userId: game.user.id, actorId: actor.id, shopId: this.shopId, itemId: item.id, quantity });
+    sendRequest({ action: "sell", userId: game.user.id, actorId: actor.id, actorUuid: actor.uuid, shopId: this.shopId, itemId: item.id, quantity });
   }
 }
 
