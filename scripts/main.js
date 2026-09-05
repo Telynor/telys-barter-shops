@@ -101,8 +101,8 @@ async function removeItemQuantity(actor, candidates, amount) {
 }
 
 async function addItemQuantity(actor, source, amount) {
-  const signature = `${source.name}|${source.type}`.toLowerCase();
-  const existing = actor.items.find(i => `${i.name}|${i.type}`.toLowerCase() === signature);
+  const signature = `${String(source.name).trim()}|${String(source.type).trim()}`.toLowerCase();
+  const existing = actor.items.find(i => `${i.name.trim()}|${i.type.trim()}`.toLowerCase() === signature);
   if (existing && quantityPath(existing)) {
     await existing.update({ "system.quantity": itemQuantity(existing) + amount });
   } else {
@@ -119,7 +119,15 @@ async function addItemQuantity(actor, source, amount) {
 }
 
 function tillItem(shop, cost) {
-  return shop.till.items.find(i => (cost.uuid && i.uuid === cost.uuid) || (i.name === cost.name && (!cost.type || i.type === cost.type)));
+  const name = String(cost.name ?? "").trim().toLowerCase();
+  const type = String(cost.type ?? "").trim().toLowerCase();
+  return shop.till.items.find(i => (cost.uuid && i.uuid === cost.uuid) || (String(i.name).trim().toLowerCase() === name && (!type || String(i.type).trim().toLowerCase() === type)));
+}
+
+function matchingListing(shop, source) {
+  const name = String(source.name ?? "").trim().toLowerCase();
+  const type = String(source.type ?? "").trim().toLowerCase();
+  return shop.listings.find(l => (source.uuid && l.item?.uuid === source.uuid) || (String(l.item?.name ?? "").trim().toLowerCase() === name && String(l.item?.type ?? "").trim().toLowerCase() === type));
 }
 
 function addToTill(shop, cost, quantity, source = null) {
@@ -223,9 +231,10 @@ async function handleSell(message) {
   const current = number(foundry.utils.getProperty(actor, `system.currency.${denomination}`));
   await actor.update({ [`system.currency.${denomination}`]: current + payout });
   shop.till.currency[denomination] = number(shop.till.currency[denomination]) - payout;
-  const resale = shop.listings.find(l => l.item?.name === soldSource.name && l.item?.type === soldSource.type);
-  if (resale) resale.stock = number(resale.stock) + count;
-  else shop.listings.push({ id: uid(), item: soldSource, bundle: 1, stock: count, payment: "currency", cost: { amount: Math.max(1, base), denomination, quantity: 1, name: "", type: "", uuid: "" } });
+  const resale = matchingListing(shop, soldSource);
+  if (resale) {
+    if (resale.stock !== null) resale.stock = number(resale.stock) + count;
+  } else shop.listings.push({ id: uid(), item: soldSource, bundle: 1, stock: count, payment: "currency", cost: { amount: Math.max(1, base), denomination, quantity: 1, name: "", type: "", uuid: "" } });
   await saveShops(all);
   notifyResult(user.id, true, `Sold ${count} × ${item.name} for ${payout} ${denomination.toUpperCase()}.`);
 }
@@ -351,6 +360,7 @@ async function handleCounterTrade(message) {
       const gmActor = offered.actorUuid ? await fromUuid(offered.actorUuid) : null;
       const item = gmActor?.items.get(offered.itemId);
       if (!gmActor || !item || itemQuantity(item) < quantity) throw new Error(`The GM character does not have enough ${offered.name}.`);
+      if (gmActor.uuid === trade.actorUuid) throw new Error("The seller's own inventory cannot be used as merchant payment.");
       items.push({ source: "actor", actorUuid: gmActor.uuid, actorName: gmActor.name, itemId: item.id, uuid: item.uuid, name: item.name, type: item.type, img: item.img, item: { ...itemSource(item), uuid: item.uuid }, quantity });
     }
   }
@@ -392,6 +402,7 @@ async function handleTradeDecision(message, decision) {
       const sourceActor = asked.actorUuid ? await fromUuid(asked.actorUuid) : null;
       const sourceItem = sourceActor?.items.get(asked.itemId);
       if (!sourceActor || !sourceItem || itemQuantity(sourceItem) < asked.quantity) throw new Error(`${asked.actorName || "The GM character"} no longer has enough ${asked.name}.`);
+      if (sourceActor.uuid === actor.uuid) throw new Error("The seller's own Item cannot be returned as merchant payment.");
       payouts.push({ asked, sourceActor, sourceItem, source: asked.item ?? { ...itemSource(sourceItem), uuid: sourceItem.uuid } });
     } else {
       const reserve = shop.till.items.find(i => i.id === asked.reserveId);
@@ -401,7 +412,12 @@ async function handleTradeDecision(message, decision) {
   }
   const soldSource = { ...itemSource(sold), uuid: trade.itemUuid || sold.uuid };
   await removeItemQuantity(actor, [sold], trade.quantity);
+  const removedMerchantItems = [];
   try {
+    for (const payout of payouts.filter(p => p.sourceActor)) {
+      await removeItemQuantity(payout.sourceActor, [payout.sourceItem], payout.asked.quantity);
+      removedMerchantItems.push(payout);
+    }
     if (trade.gold > 0) {
       const balance = number(foundry.utils.getProperty(actor, "system.currency.gp"));
       await actor.update({ "system.currency.gp": balance + trade.gold });
@@ -409,16 +425,18 @@ async function handleTradeDecision(message, decision) {
     for (const payout of payouts) await addItemQuantity(actor, payout.source, payout.asked.quantity);
   } catch (error) {
     await addItemQuantity(actor, soldSource, trade.quantity);
+    for (const payout of removedMerchantItems) await addItemQuantity(payout.sourceActor, payout.source, payout.asked.quantity);
     throw error;
   }
   shop.till.currency.gp = number(shop.till.currency.gp) - trade.gold;
   for (const payout of payouts) {
     if (payout.reserve) payout.reserve.quantity = number(payout.reserve.quantity) - payout.asked.quantity;
-    else await removeItemQuantity(payout.sourceActor, [payout.sourceItem], payout.asked.quantity);
+    else continue;
   }
-  const resale = shop.listings.find(l => l.item?.name === soldSource.name && l.item?.type === soldSource.type);
-  if (resale) resale.stock = number(resale.stock) + trade.quantity;
-  else shop.listings.push({ id: uid(), item: soldSource, bundle: 1, stock: trade.quantity, payment: "barter", cost: { amount: Math.max(1, number(foundry.utils.getProperty(soldSource, "system.price.value"), 1)), denomination: "gp", quantity: 1, name: "", type: "", uuid: "", img: "" } });
+  const resale = matchingListing(shop, soldSource);
+  if (resale) {
+    if (resale.stock !== null) resale.stock = number(resale.stock) + trade.quantity;
+  } else shop.listings.push({ id: uid(), item: soldSource, bundle: 1, stock: trade.quantity, payment: "barter", cost: { amount: Math.max(1, number(foundry.utils.getProperty(soldSource, "system.price.value"), 1)), denomination: "gp", quantity: 1, name: "", type: "", uuid: "", img: "" } });
   shop.trades = shop.trades.filter(t => t.id !== trade.id);
   await saveShops(all);
   notifyResult(trade.userId, true, `${shop.name} accepted the trade for ${trade.quantity} × ${trade.itemName}.`);
@@ -582,10 +600,10 @@ class ShopManager extends HandlebarsApplicationMixin(ApplicationV2) {
     const shop = all.find(s => s.id === this.shopId) ?? all[0] ?? null;
     if (shop) this.shopId = shop.id;
     const offers = (shop?.offers ?? []).map(o => ({ ...o, summary: [...o.items.map(i => `${i.quantity} × ${i.name}`), ...(o.gold ? [`${o.gold} GP`] : [])].join(", ") }));
-    const gmActor = actorForUser(game.user);
+    const gmActor = game.user.character ?? canvas?.tokens?.controlled?.[0]?.actor ?? null;
     const transferableTypes = new Set(["weapon", "equipment", "consumable", "tool", "loot", "container", "backpack"]);
     const gmItems = (gmActor?.items ?? []).filter(i => itemQuantity(i) > 0 && transferableTypes.has(i.type)).map(i => { const containerId = foundry.utils.getProperty(i, "system.container"); const container = containerId ? gmActor.items.get(typeof containerId === "string" ? containerId : containerId?.id) : null; return { id: i.id, actorUuid: gmActor.uuid, name: i.name, img: i.img, quantity: itemQuantity(i), containerName: container?.name ?? "Carried" }; });
-    const trades = (shop?.trades ?? []).map(t => ({ ...t, pending: t.status === "pending", counter: t.status === "counter", requestSummary: [...(t.items ?? []).map(i => `${i.quantity} × ${i.name}`), ...(t.gold ? [`${t.gold} GP`] : [])].join(" and "), reserveChoices: (shop?.till?.items ?? []).filter(i => number(i.quantity) > 0).map(i => ({ ...i, selected: t.items?.find(a => a.source !== "actor" && a.reserveId === i.id)?.quantity ?? 0 })), gmChoices: gmItems.map(i => ({ ...i, selected: t.items?.find(a => a.source === "actor" && a.itemId === i.id)?.quantity ?? 0 })) }));
+    const trades = (shop?.trades ?? []).map(t => ({ ...t, pending: t.status === "pending", counter: t.status === "counter", requestSummary: [...(t.items ?? []).map(i => `${i.quantity} × ${i.name}`), ...(t.gold ? [`${t.gold} GP`] : [])].join(" and "), reserveChoices: (shop?.till?.items ?? []).filter(i => number(i.quantity) > 0).map(i => ({ ...i, selected: t.items?.find(a => a.source !== "actor" && a.reserveId === i.id)?.quantity ?? 0 })), gmChoices: gmActor?.uuid === t.actorUuid ? [] : gmItems.map(i => ({ ...i, selected: t.items?.find(a => a.source === "actor" && a.itemId === i.id)?.quantity ?? 0 })) }));
     return { shops: all, shop, offers, trades, gmActor, users: game.users.filter(u => !u.isGM).map(u => ({ id: u.id, name: u.name, checked: shop?.users?.includes(u.id) })) };
   }
   static windowClose() { this.close(); }
