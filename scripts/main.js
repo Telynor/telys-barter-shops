@@ -10,14 +10,17 @@ const shops = () => clone(game.settings.get(MODULE_ID, SETTING) ?? []).map(norma
 const saveShops = value => game.settings.set(MODULE_ID, SETTING, value);
 const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const quantityPath = item => foundry.utils.hasProperty(item, "system.quantity") ? "system.quantity" : null;
-const itemQuantity = item => Math.max(0, number(foundry.utils.getProperty(item, "system.quantity"), 1));
+const itemQuantity = item => {
+  const raw = foundry.utils.getProperty(item, "system.quantity");
+  return Math.max(0, number(typeof raw === "object" ? raw?.value : raw, 1));
+};
 const currency = actor => clone(foundry.utils.getProperty(actor, "system.currency") ?? {});
 const actorForUser = user => canvas?.tokens?.controlled?.[0]?.actor ?? user.character ?? null;
 const canAccess = (shop, user) => user.isGM || shop.access === "all" || (shop.users ?? []).includes(user.id);
 
 function blankShop() {
   return {
-    id: uid(), name: "New Shop", description: "", image: "icons/svg/shop.svg", vendorImage: "icons/svg/mystery-man.svg", open: true,
+    id: uid(), name: "New Shop", description: "", image: "icons/svg/coins.svg", vendorImage: "icons/svg/mystery-man.svg", open: true,
     access: "all", users: [], markup: 1, tileSize: 220,
     till: { currency: { gp: 1000 }, items: [] },
     buyback: { enabled: true, rate: 0.5, denomination: "gp" }, listings: []
@@ -25,6 +28,7 @@ function blankShop() {
 }
 
 function normalizeShop(shop) {
+  if (!shop.image || shop.image === "icons/svg/shop.svg") shop.image = "icons/svg/coins.svg";
   shop.vendorImage ||= "icons/svg/mystery-man.svg";
   shop.till ||= { currency: { gp: 1000 }, items: [] };
   shop.till.currency ||= { gp: 1000 };
@@ -55,10 +59,9 @@ function affordableCurrency(actor, denomination, total) {
 
 function matchingItems(actor, cost) {
   return actor.items.filter(i => {
-    const sourceIds = [i.flags?.[MODULE_ID]?.sourceUuid, i.flags?.core?.sourceId, i._stats?.compendiumSource, i._stats?.duplicateSource].filter(Boolean);
+    const sourceIds = [i.flags?.[MODULE_ID]?.sourceUuid, i.flags?.core?.sourceId, i._stats?.compendiumSource, i._stats?.duplicateSource, i.getFlag?.("core", "sourceId")].filter(Boolean);
     if (cost.uuid && sourceIds.includes(cost.uuid)) return true;
-    return i.name.trim().toLowerCase() === String(cost.name ?? "").trim().toLowerCase()
-      && (!cost.type || i.type === cost.type);
+    return i.name.trim().toLowerCase() === String(cost.name ?? "").trim().toLowerCase();
   });
 }
 
@@ -117,7 +120,7 @@ function listingCostText(listing) {
 }
 
 function notifyResult(userId, ok, message) {
-  if (game.user.id === userId) (ok ? ui.notifications.info : ui.notifications.error)(message);
+  if (game.user.id === userId) ui.notifications[ok ? "info" : "error"](message);
   else game.socket.emit(`module.${MODULE_ID}`, { action: "result", userId, ok, message });
 }
 
@@ -158,7 +161,8 @@ async function handlePurchase(message) {
     const needed = number(listing.cost.quantity, 1) * count;
     if (!listing.cost.uuid && !listing.cost.name) throw new Error("The GM has not assigned a barter currency item to this listing.");
     const matches = matchingItems(actor, listing.cost);
-    if (matches.reduce((sum, item) => sum + itemQuantity(item), 0) < needed) throw new Error("You do not have enough barter items.");
+    const available = matches.reduce((sum, item) => sum + itemQuantity(item), 0);
+    if (available < needed) throw new Error(`${actor.name} needs ${needed} × ${listing.cost.name}, but only ${available} were found.`);
     const paidSource = matches[0];
     const refundSource = { ...itemSource(paidSource), uuid: listing.cost.uuid || paidSource.uuid };
     await removeItemQuantity(actor, matches, needed);
@@ -441,7 +445,7 @@ class ShopManager extends HandlebarsApplicationMixin(ApplicationV2) {
   static denyOffer(event, target) { const offer = shops().find(s => s.id === this.shopId)?.offers.find(o => o.id === target.dataset.offerId); if (offer) gmMessage({ action: "denyOffer", userId: offer.userId, shopId: this.shopId, offerId: offer.id }); }
   static async save() {
     const form = this.element.querySelector("form"); const fd = new FormData(form); const all = shops(); const shop = all.find(s => s.id === this.shopId); if (!shop) return;
-    shop.name = String(fd.get("name") || "Unnamed Shop"); shop.description = String(fd.get("description") || ""); shop.image = String(fd.get("image") || "icons/svg/shop.svg"); shop.vendorImage = String(fd.get("vendorImage") || "icons/svg/mystery-man.svg");
+    shop.name = String(fd.get("name") || "Unnamed Shop"); shop.description = String(fd.get("description") || ""); shop.image = String(fd.get("image") || "icons/svg/coins.svg"); shop.vendorImage = String(fd.get("vendorImage") || "icons/svg/mystery-man.svg");
     shop.open = fd.has("open"); shop.access = String(fd.get("access")); shop.users = fd.getAll("users"); shop.markup = Math.max(0, number(fd.get("markup"), 1)); shop.tileSize = Math.min(360, Math.max(160, number(fd.get("tileSize"), 220)));
     shop.buyback = { enabled: fd.has("buybackEnabled"), rate: Math.max(0, number(fd.get("buybackRate"), 0.5)), denomination: String(fd.get("buybackDenomination") || "gp") };
     shop.till.currency.gp = Math.max(0, number(fd.get("merchantGp"), 0));
@@ -463,7 +467,7 @@ Hooks.once("init", () => {
 
 Hooks.once("ready", () => {
   game.socket.on(`module.${MODULE_ID}`, message => {
-    if (message.action === "result" && message.userId === game.user.id) (message.ok ? ui.notifications.info : ui.notifications.error)(message.message);
+    if (message.action === "result" && message.userId === game.user.id) ui.notifications[message.ok ? "info" : "error"](message.message);
     else gmMessage(message);
   });
 });
