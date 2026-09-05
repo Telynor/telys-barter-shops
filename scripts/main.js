@@ -409,6 +409,19 @@ async function handleCounterTrade(message) {
   game.socket.emit(`module.${MODULE_ID}`, { action: "tradePrompt", userId: trade.userId, shopId: shop.id, message: `${shop.name} sent a counteroffer.` });
 }
 
+async function handlePlayerRevision(message) {
+  const all = shops();
+  const shop = all.find(s => s.id === message.shopId);
+  const trade = shop?.trades?.find(t => t.id === message.tradeId);
+  if (!shop || !trade) throw new Error("That trade no longer exists.");
+  if (trade.userId !== message.userId) throw new Error("Only the original offerer can counter this trade.");
+  if (trade.status !== "counter") throw new Error("This trade is not waiting for a player counteroffer.");
+  trade.status = "revision";
+  trade.updatedAt = Date.now();
+  await saveShops(all);
+  notifyResult(trade.userId, true, "The trade is still open. Adjust your offer and submit the counteroffer.");
+}
+
 async function handleTradeDecision(message, decision) {
   const all = shops();
   const shop = all.find(s => s.id === message.shopId);
@@ -479,6 +492,7 @@ async function gmMessage(message) {
       if (message.action === "denyOffer") await handleOfferDecision(message, false);
       if (message.action === "submitTrade") await handleSubmitTrade(message);
       if (message.action === "counterTrade") await handleCounterTrade(message);
+      if (message.action === "reviseTrade") await handlePlayerRevision(message);
       if (message.action === "acceptTrade") await handleTradeDecision(message, "accept");
       if (message.action === "rejectTrade") await handleTradeDecision(message, "reject");
       if (message.action === "abandonTrade") await handleTradeDecision(message, "abandon");
@@ -558,7 +572,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
   static backToShop() { this.mode = "shop"; this.render({ force: true }); }
   static clearSellItem() { this.sellDraft = null; this.render({ force: true }); }
   static acceptCounter() { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.userId === game.user.id); if (trade) sendRequest({ action: "acceptTrade", userId: game.user.id, shopId: this.shopId, tradeId: trade.id }); }
-  static reviseCounter() { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.userId === game.user.id); if (trade) sendRequest({ action: "rejectTrade", userId: game.user.id, shopId: this.shopId, tradeId: trade.id }); }
+  static reviseCounter() { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.userId === game.user.id); if (trade) sendRequest({ action: "reviseTrade", userId: game.user.id, shopId: this.shopId, tradeId: trade.id }); }
   static submitTrade(event, target) {
     const actor = actorForUser(game.user); const shop = shops().find(s => s.id === this.shopId);
     if (!actor || !shop) return ui.notifications.warn("Select a character token first.");
