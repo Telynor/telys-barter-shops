@@ -33,6 +33,7 @@ For local testing, copy the `telys-barter-shops` folder into Foundry's `Data/mod
 - Buyback pays a percentage of an item's D&D 5e `system.price.value` into the configured denomination.
 - The dedicated Sell screen accepts a dragged inventory Item and lets the player request merchant gold and/or custom currency Items, limited by the merchant's current reserves.
 - Player sales are negotiations: rejection returns the unchanged proposal for editing, acceptance moves both sides of the trade, and either side can abandon without moving anything.
+- Sale proposals automatically open the GM review screen. The GM can accept as written or counter with shop reserves plus items carried by their selected or assigned character, including items stored in containers; counteroffers automatically reopen on the player screen.
 - Purchase and sale requests are validated and executed by the active GM client.
 
 ## Release packaging
