@@ -142,14 +142,15 @@ function matchingListing(shop, source) {
   return shop.listings.find(l => (source.uuid && l.item?.uuid === source.uuid) || (String(l.item?.name ?? "").trim().toLowerCase() === name && String(l.item?.type ?? "").trim().toLowerCase() === type));
 }
 
-function addPurchasedStock(shop, source, quantity, salePrice, denomination = "gp") {
+function addPurchasedStock(shop, source, quantity, salePrice, denomination = "gp", barterCost = null) {
   const listing = matchingListing(shop, source);
   if (listing) {
     if (listing.stock !== null) listing.stock = number(listing.stock) + quantity;
     return listing;
   }
   const pricedSource = sourceWithPrice(source, salePrice, denomination);
-  const created = { id: uid(), item: pricedSource, bundle: 1, stock: quantity, payment: "currency", cost: { amount: Math.max(1, Math.ceil(number(salePrice, 1))), denomination: denomination || "gp", quantity: 1, name: "", type: "", uuid: "", img: "" } };
+  const cost = barterCost ? { amount: Math.max(1, Math.ceil(number(salePrice, 1))), denomination: denomination || "gp", quantity: barterCost.quantity, name: barterCost.name, type: barterCost.type, uuid: barterCost.uuid, img: barterCost.img } : { amount: Math.max(1, Math.ceil(number(salePrice, 1))), denomination: denomination || "gp", quantity: 1, name: "", type: "", uuid: "", img: "" };
+  const created = { id: uid(), item: pricedSource, bundle: 1, stock: quantity, payment: barterCost ? "barter" : "currency", cost };
   shop.listings.push(created);
   return created;
 }
@@ -456,8 +457,11 @@ async function handleTradeDecision(message, decision) {
   const merchantSpend = trade.gold + payouts.reduce((sum, payout) => sum + number(foundry.utils.getProperty(payout.source, "system.price.value"), 0) * payout.asked.quantity, 0);
   const purchasedUnits = saleLines.reduce((sum, sale) => sum + sale.line.quantity, 0);
   const resalePrice = merchantSpend * number(shop.markup, 1) / Math.max(1, purchasedUnits);
+  const primaryBarter = payouts[0] ?? null;
+  const primaryBarterPaid = primaryBarter ? payouts.filter(p => p.reserve.id === primaryBarter.reserve.id).reduce((sum, p) => sum + p.asked.quantity, 0) : 0;
+  const barterCost = primaryBarter ? { quantity: Math.max(1, Math.ceil(primaryBarterPaid * number(shop.markup, 1) / Math.max(1, purchasedUnits))), name: primaryBarter.asked.name, type: primaryBarter.asked.type, uuid: primaryBarter.asked.uuid, img: primaryBarter.asked.img } : null;
   for (const sale of saleLines) {
-    addPurchasedStock(shop, sale.source, sale.line.quantity, resalePrice, "gp");
+    addPurchasedStock(shop, sale.source, sale.line.quantity, resalePrice, "gp", barterCost);
   }
   shop.trades = shop.trades.filter(t => t.id !== trade.id);
   await saveShops(all);
