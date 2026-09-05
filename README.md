@@ -23,7 +23,9 @@ For local testing, copy the `telys-barter-shops` folder into Foundry's `Data/mod
 
 - A listing's blank stock value means unlimited stock.
 - Currency names are D&D 5e currency keys such as `gp`, `sp`, and `cp`.
-- Barter currently matches an owned item by exact name and optionally item type.
+- Barter stores the UUID, image, name, and type of the currency Item dropped onto the listing, then matches the selected character's owned copy by source UUID or exact name and type.
+- Each listing can accept barter only (the default), regular D&D 5e currency only, or either payment method.
+- Players choose quantity directly on the item card or type a bulk quantity; purchasing does not open a quantity dialog.
 - Price markup applies to currency purchases. `1.25` means 25% above the listed price.
 - Buyback pays a percentage of an item's D&D 5e `system.price.value` into the configured denomination.
 - Purchase and sale requests are validated and executed by the active GM client.
