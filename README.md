@@ -28,6 +28,7 @@ For local testing, copy the `telys-barter-shops` folder into Foundry's `Data/mod
 - Players choose quantity directly on the item card or type a bulk quantity; purchasing does not open a quantity dialog.
 - Best Offer listings let players offer multiple owned loot Items and/or gold without paying immediately. The GM can accept or deny; acceptance revalidates and deducts the offer, delivers the purchase, and decrements stock.
 - Fixed-price Buy clicks process automatically through the active GM and only show the final result.
+- Module sockets are explicitly enabled, and transactions use the selected Actor's full UUID so player purchases and synthetic-token inventories reach the GM correctly.
 - Price markup applies to currency purchases. `1.25` means 25% above the listed price.
 - Buyback pays a percentage of an item's D&D 5e `system.price.value` into the configured denomination.
 - Purchase and sale requests are validated and executed by the active GM client.
