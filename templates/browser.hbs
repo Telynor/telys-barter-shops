@@ -1,3 +1,4 @@
+<div class="tbs-app-root">
 <div class="tbs-window-actions"><button type="button" data-action="windowMinimize" title="Minimize"><i class="fa-solid fa-minus"></i></button><button type="button" data-action="windowClose" title="Close"><i class="fa-solid fa-xmark"></i></button></div>
 <div class="tbs-shell">
   {{#unless shop}}
@@ -18,4 +19,5 @@
     </div>
     {{#if canSell}}<h2 class="tbs-section-title">Sell to {{shop.name}}</h2><div class="tbs-inventory-list">{{#each inventory}}<div><img src="{{img}}"><span><strong>{{name}}</strong><small>Owned: {{quantity}} · Base value: {{value}}</small></span><button type="button" data-action="sell" data-item-id="{{id}}" {{#unless ../../shop.open}}disabled{{/unless}}>Sell</button></div>{{else}}<p>No items available to sell.</p>{{/each}}</div>{{/if}}
   {{/unless}}
+</div>
 </div>
