@@ -1,17 +1,20 @@
+<div class="tbs-window-actions"><button type="button" data-action="windowMinimize" title="Minimize"><i class="fa-solid fa-minus"></i></button><button type="button" data-action="windowClose" title="Close"><i class="fa-solid fa-xmark"></i></button></div>
 <div class="tbs-shell">
   {{#unless shop}}
     <header class="tbs-hero"><div><span class="tbs-kicker">MARKETPLACE</span><h1>Available Shops</h1><p>Choose a merchant to browse their inventory.</p></div></header>
     <div class="tbs-shop-grid">
-      {{#each shops}}<button type="button" class="tbs-shop-card {{#if closed}}is-closed{{/if}}" data-action="choose" data-shop-id="{{id}}">
-        <img src="{{image}}" alt=""><span><strong>{{name}}</strong><small>{{#if closed}}Closed{{else}}Open now{{/if}}</small></span><i class="fa-solid fa-chevron-right"></i>
-      </button>{{else}}<div class="tbs-empty"><i class="fa-solid fa-store-slash"></i><h2>No shops available</h2><p>A Game Master can grant you access from the shop manager.</p></div>{{/each}}
+      {{#each shops}}<button type="button" class="tbs-shop-card {{#if closed}}is-closed{{/if}}" data-action="choose" data-shop-id="{{id}}"><img src="{{cardImage}}" alt="{{name}}"><span><strong>{{name}}</strong><small>{{#if closed}}Closed{{else}}Open now{{/if}}</small></span><i class="fa-solid fa-chevron-right"></i></button>
+      {{else}}<div class="tbs-empty"><i class="fa-solid fa-store-slash"></i><h2>No shops available</h2><p>A Game Master can grant you access from the shop manager.</p></div>{{/each}}
     </div>
   {{else}}
-    <header class="tbs-shop-header"><button type="button" data-action="back" aria-label="Back"><i class="fa-solid fa-arrow-left"></i></button><img src="{{shop.image}}"><div><span class="tbs-kicker">{{#if shop.open}}OPEN{{else}}CLOSED{{/if}}</span><h1>{{shop.name}}</h1><p>{{shop.description}}</p></div>{{#if actor}}<div class="tbs-wallet"><small>Shopping as</small><strong>{{actor.name}}</strong></div>{{/if}}</header>
+    <div class="tbs-shop-banner" style="background-image:url('{{shop.image}}')"></div>
+    <header class="tbs-shop-header"><button type="button" data-action="back" aria-label="Back"><i class="fa-solid fa-arrow-left"></i></button><img class="tbs-vendor-image" src="{{shop.vendorImage}}" alt="Vendor"><div class="tbs-shop-copy"><span class="tbs-kicker">{{#if shop.open}}OPEN{{else}}CLOSED{{/if}}</span><h1>{{shop.name}}</h1><p>{{shop.description}}</p></div>{{#if actor}}<div class="tbs-wallet"><small>Shopping as</small><strong>{{actor.name}}</strong></div>{{/if}}</header>
+    <div class="tbs-merchant-reserves"><strong>Merchant reserves</strong>{{#each merchantCoins}}<span>{{value}} {{key}}</span>{{/each}}{{#each merchantItems}}<span><img src="{{img}}">{{quantity}} × {{name}}</span>{{/each}}</div>
     {{#unless shop.open}}<div class="tbs-closed-banner"><i class="fa-solid fa-lock"></i> This shop is currently closed.</div>{{/unless}}
     <h2 class="tbs-section-title">Shop Inventory</h2>
     <div class="tbs-product-grid" style="--tile-size: {{tileSize}}px">
-      {{#each listings}}<article class="tbs-product {{#if soldOut}}is-sold{{/if}}"><img src="{{item.img}}"><div class="tbs-product-body"><h3>{{item.name}}</h3><div class="tbs-meta"><span>{{costText}}</span><span>{{#if stock}}{{stock}} left{{else}}{{#if soldOut}}Sold out{{else}}Unlimited{{/if}}{{/if}}</span></div><button type="button" data-action="buy" data-listing-id="{{id}}" {{#if ../shop.open}}{{else}}disabled{{/if}} {{#if soldOut}}disabled{{/if}}><i class="fa-solid fa-bag-shopping"></i> Buy {{bundle}}</button></div></article>{{else}}<div class="tbs-empty"><p>This merchant has no items for sale.</p></div>{{/each}}
+      {{#each listings}}<article class="tbs-product {{#if soldOut}}is-sold{{/if}}"><div class="tbs-product-image"><img src="{{item.img}}" alt="{{item.name}}"></div><div class="tbs-product-body"><h3 title="{{item.name}}">{{item.name}}</h3><div class="tbs-meta"><span>{{costText}}</span><span>{{#if stock}}{{stock}} in stock{{else}}{{#if soldOut}}Sold out{{else}}Unlimited stock{{/if}}{{/if}}</span></div><button type="button" data-action="buy" data-listing-id="{{id}}" {{#if ../shop.open}}{{else}}disabled{{/if}} {{#if soldOut}}disabled{{/if}}><i class="fa-solid fa-bag-shopping"></i> Buy {{bundle}}</button></div></article>
+      {{else}}<div class="tbs-empty"><p>This merchant has no items for sale.</p></div>{{/each}}
     </div>
     {{#if canSell}}<h2 class="tbs-section-title">Sell to {{shop.name}}</h2><div class="tbs-inventory-list">{{#each inventory}}<div><img src="{{img}}"><span><strong>{{name}}</strong><small>Owned: {{quantity}} · Base value: {{value}}</small></span><button type="button" data-action="sell" data-item-id="{{id}}" {{#unless ../../shop.open}}disabled{{/unless}}>Sell</button></div>{{else}}<p>No items available to sell.</p>{{/each}}</div>{{/if}}
   {{/unless}}
