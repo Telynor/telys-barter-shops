@@ -1,0 +1,42 @@
+name: Build Foundry Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate manifest version
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          module_version="$(jq -r '.version' module.json)"
+          manifest_version="$(jq -r '.version' manifest.json)"
+          test "$tag_version" = "$module_version"
+          test "$tag_version" = "$manifest_version"
+
+      - name: Build module archive
+        shell: bash
+        run: |
+          mkdir -p build/telys-barter-shops
+          cp -R module.json README.md lang scripts styles templates build/telys-barter-shops/
+          cd build/telys-barter-shops
+          zip -r ../telys-barter-shops.zip .
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            manifest.json
+            module.json
+            build/telys-barter-shops.zip
