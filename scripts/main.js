@@ -6,7 +6,7 @@ const { ApplicationV2, HandlebarsApplicationMixin, DialogV2 } = api;
 const clone = value => foundry.utils.deepClone(value);
 const uid = () => foundry.utils.randomID();
 const esc = value => foundry.utils.escapeHTML(String(value ?? ""));
-const shops = () => clone(game.settings.get(MODULE_ID, SETTING) ?? []);
+const shops = () => clone(game.settings.get(MODULE_ID, SETTING) ?? []).map(normalizeShop);
 const saveShops = value => game.settings.set(MODULE_ID, SETTING, value);
 const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const quantityPath = item => foundry.utils.hasProperty(item, "system.quantity") ? "system.quantity" : null;
@@ -17,15 +17,30 @@ const canAccess = (shop, user) => user.isGM || shop.access === "all" || (shop.us
 
 function blankShop() {
   return {
-    id: uid(), name: "New Shop", description: "", image: "icons/svg/shop.svg", open: true,
+    id: uid(), name: "New Shop", description: "", image: "icons/svg/shop.svg", vendorImage: "icons/svg/mystery-man.svg", open: true,
     access: "all", users: [], markup: 1, tileSize: 220,
+    till: { currency: { gp: 1000 }, items: [] },
     buyback: { enabled: true, rate: 0.5, denomination: "gp" }, listings: []
   };
 }
 
+function normalizeShop(shop) {
+  shop.vendorImage ||= "icons/svg/mystery-man.svg";
+  shop.till ||= { currency: { gp: 1000 }, items: [] };
+  shop.till.currency ||= { gp: 1000 };
+  shop.till.items ||= [];
+  shop.listings ||= [];
+  return shop;
+}
+
 function itemSource(item) {
-  const data = item.toObject();
+  const data = item.toObject(false);
   delete data._id;
+  delete data.uuid;
+  delete data.folder;
+  delete data.sort;
+  delete data.ownership;
+  delete data._stats;
   return data;
 }
 
@@ -65,12 +80,28 @@ async function addItemQuantity(actor, source, amount) {
     await existing.update({ "system.quantity": itemQuantity(existing) + amount });
   } else {
     const data = clone(source);
+    const sourceUuid = data.uuid ?? "";
+    delete data._id; delete data.uuid; delete data.folder; delete data.sort; delete data.ownership; delete data._stats;
     data.system ??= {};
     if (foundry.utils.hasProperty(data, "system.quantity")) data.system.quantity = amount;
     data.flags ??= {};
-    data.flags[MODULE_ID] = { ...(data.flags[MODULE_ID] ?? {}), sourceUuid: source.uuid ?? "" };
-    await actor.createEmbeddedDocuments("Item", [data]);
+    data.flags[MODULE_ID] = { ...(data.flags[MODULE_ID] ?? {}), sourceUuid };
+    const created = await actor.createEmbeddedDocuments("Item", [data], { keepId: false });
+    if (!created?.length) throw new Error("Foundry did not create the purchased item.");
   }
+}
+
+function tillItem(shop, cost) {
+  return shop.till.items.find(i => (cost.uuid && i.uuid === cost.uuid) || (i.name === cost.name && (!cost.type || i.type === cost.type)));
+}
+
+function addToTill(shop, cost, quantity, source = null) {
+  let entry = tillItem(shop, cost);
+  if (!entry) {
+    entry = { id: uid(), uuid: cost.uuid ?? "", name: cost.name, type: cost.type ?? "loot", img: source?.img ?? "icons/svg/coins.svg", quantity: 0, item: source ? { ...itemSource(source), uuid: source.uuid } : null };
+    shop.till.items.push(entry);
+  }
+  entry.quantity = number(entry.quantity) + quantity;
 }
 
 function listingCostText(listing) {
@@ -106,13 +137,26 @@ async function handlePurchase(message) {
     if (!affordableCurrency(actor, listing.cost.denomination, total)) throw new Error("You cannot afford that purchase.");
     const current = number(foundry.utils.getProperty(actor, `system.currency.${listing.cost.denomination}`));
     await actor.update({ [`system.currency.${listing.cost.denomination}`]: current - total });
+    shop.till.currency[listing.cost.denomination] = number(shop.till.currency[listing.cost.denomination]) + total;
   } else {
     const needed = number(listing.cost.quantity, 1) * count;
     const matches = matchingItems(actor, listing.cost);
     if (matches.reduce((sum, item) => sum + itemQuantity(item), 0) < needed) throw new Error("You do not have enough barter items.");
+    const paidSource = matches[0];
     await removeItemQuantity(actor, matches, needed);
+    addToTill(shop, listing.cost, needed, paidSource);
   }
-  await addItemQuantity(actor, listing.item, number(listing.bundle, 1) * count);
+  try {
+    await addItemQuantity(actor, listing.item, number(listing.bundle, 1) * count);
+  } catch (error) {
+    if (listing.payment === "currency") {
+      const total = Math.ceil(number(listing.cost.amount) * number(shop.markup, 1) * count);
+      const current = number(foundry.utils.getProperty(actor, `system.currency.${listing.cost.denomination}`));
+      await actor.update({ [`system.currency.${listing.cost.denomination}`]: current + total });
+      shop.till.currency[listing.cost.denomination] = Math.max(0, number(shop.till.currency[listing.cost.denomination]) - total);
+    }
+    throw error;
+  }
   if (listing.stock !== null) listing.stock = number(listing.stock) - count;
   await saveShops(all);
   notifyResult(user.id, true, `Purchased ${count * number(listing.bundle, 1)} × ${listing.item.name}.`);
@@ -132,10 +176,17 @@ async function handleSell(message) {
   const base = number(foundry.utils.getProperty(item, "system.price.value"), 0);
   const payout = Math.floor(base * number(shop.buyback.rate, 0.5) * count);
   if (payout <= 0) throw new Error("This item has no buyback value.");
-  await removeItemQuantity(actor, [item], count);
   const denomination = shop.buyback.denomination || "gp";
+  if (number(shop.till.currency[denomination]) < payout) throw new Error("The merchant does not have enough money for this buyback.");
+  const soldSource = { ...itemSource(item), uuid: item.uuid };
+  await removeItemQuantity(actor, [item], count);
   const current = number(foundry.utils.getProperty(actor, `system.currency.${denomination}`));
   await actor.update({ [`system.currency.${denomination}`]: current + payout });
+  shop.till.currency[denomination] = number(shop.till.currency[denomination]) - payout;
+  const resale = shop.listings.find(l => l.item?.name === soldSource.name && l.item?.type === soldSource.type);
+  if (resale) resale.stock = number(resale.stock) + count;
+  else shop.listings.push({ id: uid(), item: soldSource, bundle: 1, stock: count, payment: "currency", cost: { amount: Math.max(1, base), denomination, quantity: 1, name: "", type: "", uuid: "" } });
+  await saveShops(all);
   notifyResult(user.id, true, `Sold ${count} × ${item.name} for ${payout} ${denomination.toUpperCase()}.`);
 }
 
@@ -156,7 +207,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
   static DEFAULT_OPTIONS = {
     id: "tbs-browser", classes: ["tbs", "tbs-browser"], tag: "section",
     position: { width: 980, height: 720 }, window: { resizable: true, title: "Tely's Barter Shops", icon: "fa-solid fa-store" },
-    actions: { choose: ShopBrowser.choose, buy: ShopBrowser.buy, sell: ShopBrowser.sell, back: ShopBrowser.back }
+    actions: { choose: ShopBrowser.choose, buy: ShopBrowser.buy, sell: ShopBrowser.sell, back: ShopBrowser.back, windowClose: ShopBrowser.windowClose, windowMinimize: ShopBrowser.windowMinimize }
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/browser.hbs` } };
   constructor(options = {}) { super(options); this.shopId = options.shopId ?? null; }
@@ -165,12 +216,16 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
     const shop = available.find(s => s.id === this.shopId) ?? null;
     const actor = actorForUser(game.user);
     return {
-      shops: available.map(s => ({ ...s, closed: !s.open })), shop,
+      shops: available.map(s => ({ ...s, closed: !s.open, cardImage: s.vendorImage || s.image })), shop,
       listings: (shop?.listings ?? []).map(l => ({ ...l, costText: listingCostText(l), soldOut: l.stock !== null && number(l.stock) <= 0 })),
       actor, inventory: actor?.items.filter(i => itemQuantity(i) > 0).map(i => ({ id: i.id, name: i.name, img: i.img, quantity: itemQuantity(i), value: number(foundry.utils.getProperty(i, "system.price.value")) })) ?? [],
-      canSell: !!shop?.buyback?.enabled, tileSize: shop?.tileSize ?? 220
+      canSell: !!shop?.buyback?.enabled, tileSize: shop?.tileSize ?? 220,
+      merchantCoins: Object.entries(shop?.till?.currency ?? {}).filter(([, value]) => number(value) > 0).map(([key, value]) => ({ key: key.toUpperCase(), value })),
+      merchantItems: (shop?.till?.items ?? []).filter(i => number(i.quantity) > 0)
     };
   }
+  static windowClose() { this.close(); }
+  static windowMinimize() { this.minimize(); }
   static choose(event, target) { this.shopId = target.dataset.shopId; this.render({ force: true }); }
   static back() { this.shopId = null; this.render({ force: true }); }
   static async buy(event, target) {
@@ -197,7 +252,7 @@ class ShopManager extends HandlebarsApplicationMixin(ApplicationV2) {
   static DEFAULT_OPTIONS = {
     id: "tbs-manager", classes: ["tbs", "tbs-manager"], tag: "section",
     position: { width: 1100, height: 760 }, window: { resizable: true, title: "Manage Barter Shops", icon: "fa-solid fa-shop-lock" },
-    actions: { create: ShopManager.create, select: ShopManager.select, remove: ShopManager.remove, save: ShopManager.save, removeListing: ShopManager.removeListing }
+    actions: { create: ShopManager.create, select: ShopManager.select, remove: ShopManager.remove, save: ShopManager.save, removeListing: ShopManager.removeListing, removeCurrency: ShopManager.removeCurrency, windowClose: ShopManager.windowClose, windowMinimize: ShopManager.windowMinimize }
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/manager.hbs` } };
   constructor(options = {}) { super(options); this.shopId = null; }
@@ -207,10 +262,14 @@ class ShopManager extends HandlebarsApplicationMixin(ApplicationV2) {
     if (shop) this.shopId = shop.id;
     return { shops: all, shop, users: game.users.filter(u => !u.isGM).map(u => ({ id: u.id, name: u.name, checked: shop?.users?.includes(u.id) })) };
   }
+  static windowClose() { this.close(); }
+  static windowMinimize() { this.minimize(); }
   _onRender(context, options) {
     super._onRender(context, options);
     this.element.querySelector(".tbs-listings")?.addEventListener("drop", e => this._drop(e));
     this.element.querySelector(".tbs-listings")?.addEventListener("dragover", e => e.preventDefault());
+    this.element.querySelector(".tbs-currency-drop")?.addEventListener("drop", e => this._drop(e));
+    this.element.querySelector(".tbs-currency-drop")?.addEventListener("dragover", e => e.preventDefault());
   }
   async _drop(event) {
     event.preventDefault();
@@ -220,6 +279,10 @@ class ShopManager extends HandlebarsApplicationMixin(ApplicationV2) {
     const item = await fromUuid(data.uuid);
     if (!item) return;
     const all = shops(); const shop = all.find(s => s.id === this.shopId); if (!shop) return;
+    if (event.target.closest(".tbs-currency-drop")) {
+      addToTill(shop, { uuid: item.uuid, name: item.name, type: item.type }, itemQuantity(item), item);
+      await saveShops(all); this.render({ force: true }); return;
+    }
     const costTarget = event.target.closest("[data-cost-listing-id]");
     if (costTarget) {
       const listing = shop.listings.find(l => l.id === costTarget.dataset.costListingId);
@@ -238,11 +301,14 @@ class ShopManager extends HandlebarsApplicationMixin(ApplicationV2) {
     if (!yes) return; const all = shops().filter(s => s.id !== this.shopId); await saveShops(all); this.shopId = all[0]?.id ?? null; this.render({ force: true });
   }
   static async removeListing(event, target) { const all = shops(); const shop = all.find(s => s.id === this.shopId); shop.listings = shop.listings.filter(l => l.id !== target.dataset.listingId); await saveShops(all); this.render({ force: true }); }
+  static async removeCurrency(event, target) { const all = shops(); const shop = all.find(s => s.id === this.shopId); shop.till.items = shop.till.items.filter(i => i.id !== target.dataset.currencyId); await saveShops(all); this.render({ force: true }); }
   static async save() {
     const form = this.element.querySelector("form"); const fd = new FormData(form); const all = shops(); const shop = all.find(s => s.id === this.shopId); if (!shop) return;
-    shop.name = String(fd.get("name") || "Unnamed Shop"); shop.description = String(fd.get("description") || ""); shop.image = String(fd.get("image") || "icons/svg/shop.svg");
+    shop.name = String(fd.get("name") || "Unnamed Shop"); shop.description = String(fd.get("description") || ""); shop.image = String(fd.get("image") || "icons/svg/shop.svg"); shop.vendorImage = String(fd.get("vendorImage") || "icons/svg/mystery-man.svg");
     shop.open = fd.has("open"); shop.access = String(fd.get("access")); shop.users = fd.getAll("users"); shop.markup = Math.max(0, number(fd.get("markup"), 1)); shop.tileSize = Math.min(360, Math.max(160, number(fd.get("tileSize"), 220)));
     shop.buyback = { enabled: fd.has("buybackEnabled"), rate: Math.max(0, number(fd.get("buybackRate"), 0.5)), denomination: String(fd.get("buybackDenomination") || "gp") };
+    shop.till.currency.gp = Math.max(0, number(fd.get("merchantGp"), 0));
+    for (const entry of shop.till.items) entry.quantity = Math.max(0, number(fd.get(`currency.${entry.id}.quantity`), entry.quantity));
     for (const listing of shop.listings) {
       const p = `listing.${listing.id}.`; listing.bundle = Math.max(1, number(fd.get(p + "bundle"), 1));
       const stockRaw = String(fd.get(p + "stock") ?? "").trim(); listing.stock = stockRaw === "" ? null : Math.max(0, Math.floor(number(stockRaw)));
