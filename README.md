@@ -35,6 +35,7 @@ For local testing, copy the `telys-barter-shops` folder into Foundry's `Data/mod
 - Player sales are negotiations: rejection returns the unchanged proposal for editing, acceptance moves both sides of the trade, and either side can abandon without moving anything.
 - Sale proposals automatically open the GM review screen. A GM counteroffer selects only from the original offerer's carried and contained inventory, while merchant payment remains limited to shop gold and currency reserves; counteroffers automatically reopen on the player screen.
 - Counteroffers can request multiple player Items. Final acceptance removes those exact Items and quantities, merges them into shop stock, and delivers only the merchant payment.
+- Purchased Items receive a minimum nonzero per-item price calculated from the currency or barter value paid and the shop markup, preventing zero-value quick-buyback loops.
 - Purchase and sale requests are validated and executed by the active GM client.
 
 ## Release packaging
