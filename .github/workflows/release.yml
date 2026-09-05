@@ -2,8 +2,11 @@ name: Build Foundry Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,14 +18,14 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Validate manifest version
+      - name: Read and validate manifest version
+        id: version
         shell: bash
         run: |
-          tag_version="${GITHUB_REF_NAME#v}"
           module_version="$(jq -r '.version' module.json)"
           manifest_version="$(jq -r '.version' manifest.json)"
-          test "$tag_version" = "$module_version"
-          test "$tag_version" = "$manifest_version"
+          test "$module_version" = "$manifest_version"
+          echo "version=$module_version" >> "$GITHUB_OUTPUT"
 
       - name: Build module archive
         shell: bash
@@ -35,6 +38,7 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.version }}
           generate_release_notes: true
           files: |
             manifest.json
