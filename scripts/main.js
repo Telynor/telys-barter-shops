@@ -330,7 +330,8 @@ async function handleSubmitTrade(message) {
   if (!gold && !askedItems.length) throw new Error("Ask for gold or at least one merchant currency Item.");
   const existing = message.tradeId ? shop.trades.find(t => t.id === message.tradeId && t.userId === user.id) : null;
   const trade = existing ?? { id: uid(), userId: user.id, createdAt: Date.now() };
-  Object.assign(trade, { actorId: actor.id, actorUuid: actor.uuid, actorName: actor.name, itemId: item.id, itemUuid: item.uuid, itemName: item.name, itemType: item.type, itemImg: item.img, quantity, gold, items: askedItems, status: "pending", updatedAt: Date.now() });
+  const sellerItems = [{ itemId: item.id, uuid: item.uuid, name: item.name, type: item.type, img: item.img, quantity }];
+  Object.assign(trade, { actorId: actor.id, actorUuid: actor.uuid, actorName: actor.name, itemId: item.id, itemUuid: item.uuid, itemName: item.name, itemType: item.type, itemImg: item.img, quantity, sellerItems, gold, items: askedItems, status: "pending", updatedAt: Date.now() });
   if (!existing) shop.trades.push(trade);
   await saveShops(all);
   notifyResult(user.id, true, `Sale proposal sent to ${shop.name}.`);
@@ -343,9 +344,16 @@ async function handleCounterTrade(message) {
   const trade = shop?.trades?.find(t => t.id === message.tradeId);
   if (!shop || !trade) throw new Error("That trade no longer exists.");
   const seller = trade.actorUuid ? await fromUuid(trade.actorUuid) : game.actors.get(trade.actorId);
-  const soldItem = seller?.items.get(trade.itemId);
-  const saleQuantity = Math.max(1, Math.floor(number(message.saleQuantity, trade.quantity)));
-  if (!seller || !soldItem || itemQuantity(soldItem) < saleQuantity) throw new Error(`${trade.actorName} does not have that many ${trade.itemName}.`);
+  if (!seller) throw new Error("The offering character no longer exists.");
+  const sellerItems = [];
+  for (const selected of message.sellerItems ?? []) {
+    const item = seller.items.get(selected.itemId);
+    const quantity = Math.max(0, Math.floor(number(selected.quantity, 0)));
+    if (!quantity) continue;
+    if (!item || itemQuantity(item) < quantity) throw new Error(`${trade.actorName} does not have enough ${selected.name}.`);
+    sellerItems.push({ itemId: item.id, uuid: item.uuid, name: item.name, type: item.type, img: item.img, quantity });
+  }
+  if (!sellerItems.length) throw new Error("Select at least one Item from the offerer's inventory.");
   const gold = Math.max(0, Math.floor(number(message.gold, 0)));
   if (number(shop.till.currency.gp) < gold) throw new Error(`${shop.name} only has ${number(shop.till.currency.gp)} GP.`);
   const items = [];
@@ -356,18 +364,14 @@ async function handleCounterTrade(message) {
       const reserve = shop.till.items.find(i => i.id === offered.reserveId);
       if (!reserve || number(reserve.quantity) < quantity) throw new Error(`${shop.name} does not have enough ${offered.name}.`);
       items.push({ source: "shop", reserveId: reserve.id, uuid: reserve.uuid, name: reserve.name, type: reserve.type, img: reserve.img, quantity });
-    } else {
-      const gmActor = offered.actorUuid ? await fromUuid(offered.actorUuid) : null;
-      const item = gmActor?.items.get(offered.itemId);
-      if (!gmActor || !item || itemQuantity(item) < quantity) throw new Error(`The GM character does not have enough ${offered.name}.`);
-      if (gmActor.uuid === trade.actorUuid) throw new Error("The seller's own inventory cannot be used as merchant payment.");
-      items.push({ source: "actor", actorUuid: gmActor.uuid, actorName: gmActor.name, itemId: item.id, uuid: item.uuid, name: item.name, type: item.type, img: item.img, item: { ...itemSource(item), uuid: item.uuid }, quantity });
     }
   }
   if (!gold && !items.length) throw new Error("A counteroffer must include gold or at least one Item.");
   trade.gold = gold;
   trade.items = items;
-  trade.quantity = saleQuantity;
+  trade.sellerItems = sellerItems;
+  const primary = sellerItems[0];
+  Object.assign(trade, { itemId: primary.itemId, itemUuid: primary.uuid, itemName: primary.name, itemType: primary.type, itemImg: primary.img, quantity: primary.quantity });
   trade.status = "counter";
   trade.updatedAt = Date.now();
   await saveShops(all);
@@ -393,53 +397,41 @@ async function handleTradeDecision(message, decision) {
     return;
   }
   const actor = trade.actorUuid ? await fromUuid(trade.actorUuid) : game.actors.get(trade.actorId);
-  const sold = actor?.items.get(trade.itemId);
-  if (!actor || !sold || itemQuantity(sold) < trade.quantity) throw new Error(`${trade.actorName} no longer has enough ${trade.itemName}.`);
+  if (!actor) throw new Error("The offering character no longer exists.");
+  const saleLines = (trade.sellerItems?.length ? trade.sellerItems : [{ itemId: trade.itemId, uuid: trade.itemUuid, name: trade.itemName, type: trade.itemType, img: trade.itemImg, quantity: trade.quantity }]).map(line => {
+    const item = actor.items.get(line.itemId);
+    if (!item || itemQuantity(item) < line.quantity) throw new Error(`${trade.actorName} no longer has enough ${line.name}.`);
+    return { line, item, source: { ...itemSource(item), uuid: line.uuid || item.uuid } };
+  });
   if (number(shop.till.currency.gp) < trade.gold) throw new Error(`${shop.name} no longer has enough gold.`);
   const payouts = [];
   for (const asked of trade.items ?? []) {
-    if (asked.source === "actor") {
-      const sourceActor = asked.actorUuid ? await fromUuid(asked.actorUuid) : null;
-      const sourceItem = sourceActor?.items.get(asked.itemId);
-      if (!sourceActor || !sourceItem || itemQuantity(sourceItem) < asked.quantity) throw new Error(`${asked.actorName || "The GM character"} no longer has enough ${asked.name}.`);
-      if (sourceActor.uuid === actor.uuid) throw new Error("The seller's own Item cannot be returned as merchant payment.");
-      payouts.push({ asked, sourceActor, sourceItem, source: asked.item ?? { ...itemSource(sourceItem), uuid: sourceItem.uuid } });
-    } else {
-      const reserve = shop.till.items.find(i => i.id === asked.reserveId);
-      if (!reserve || number(reserve.quantity) < asked.quantity || !reserve.item) throw new Error(`${shop.name} no longer has enough ${asked.name}.`);
-      payouts.push({ asked, reserve, source: reserve.item });
-    }
+    const reserve = shop.till.items.find(i => i.id === asked.reserveId);
+    if (!reserve || number(reserve.quantity) < asked.quantity || !reserve.item) throw new Error(`${shop.name} no longer has enough ${asked.name}.`);
+    payouts.push({ asked, reserve, source: reserve.item });
   }
-  const soldSource = { ...itemSource(sold), uuid: trade.itemUuid || sold.uuid };
-  await removeItemQuantity(actor, [sold], trade.quantity);
-  const removedMerchantItems = [];
+  for (const sale of saleLines) await removeItemQuantity(actor, [sale.item], sale.line.quantity);
   try {
-    for (const payout of payouts.filter(p => p.sourceActor)) {
-      await removeItemQuantity(payout.sourceActor, [payout.sourceItem], payout.asked.quantity);
-      removedMerchantItems.push(payout);
-    }
     if (trade.gold > 0) {
       const balance = number(foundry.utils.getProperty(actor, "system.currency.gp"));
       await actor.update({ "system.currency.gp": balance + trade.gold });
     }
     for (const payout of payouts) await addItemQuantity(actor, payout.source, payout.asked.quantity);
   } catch (error) {
-    await addItemQuantity(actor, soldSource, trade.quantity);
-    for (const payout of removedMerchantItems) await addItemQuantity(payout.sourceActor, payout.source, payout.asked.quantity);
+    for (const sale of saleLines) await addItemQuantity(actor, sale.source, sale.line.quantity);
     throw error;
   }
   shop.till.currency.gp = number(shop.till.currency.gp) - trade.gold;
-  for (const payout of payouts) {
-    if (payout.reserve) payout.reserve.quantity = number(payout.reserve.quantity) - payout.asked.quantity;
-    else continue;
+  for (const payout of payouts) payout.reserve.quantity = number(payout.reserve.quantity) - payout.asked.quantity;
+  for (const sale of saleLines) {
+    const resale = matchingListing(shop, sale.source);
+    if (resale) {
+      if (resale.stock !== null) resale.stock = number(resale.stock) + sale.line.quantity;
+    } else shop.listings.push({ id: uid(), item: sale.source, bundle: 1, stock: sale.line.quantity, payment: "barter", cost: { amount: Math.max(1, number(foundry.utils.getProperty(sale.source, "system.price.value"), 1)), denomination: "gp", quantity: 1, name: "", type: "", uuid: "", img: "" } });
   }
-  const resale = matchingListing(shop, soldSource);
-  if (resale) {
-    if (resale.stock !== null) resale.stock = number(resale.stock) + trade.quantity;
-  } else shop.listings.push({ id: uid(), item: soldSource, bundle: 1, stock: trade.quantity, payment: "barter", cost: { amount: Math.max(1, number(foundry.utils.getProperty(soldSource, "system.price.value"), 1)), denomination: "gp", quantity: 1, name: "", type: "", uuid: "", img: "" } });
   shop.trades = shop.trades.filter(t => t.id !== trade.id);
   await saveShops(all);
-  notifyResult(trade.userId, true, `${shop.name} accepted the trade for ${trade.quantity} × ${trade.itemName}.`);
+  notifyResult(trade.userId, true, `${shop.name} accepted the trade for ${saleLines.map(s => `${s.line.quantity} × ${s.line.name}`).join(", ")}.`);
 }
 
 async function gmMessage(message) {
@@ -476,7 +468,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
     const shop = available.find(s => s.id === this.shopId) ?? null;
     const actor = actorForUser(game.user);
     const savedTrade = shop?.trades?.find(t => t.userId === game.user.id && (!actor || t.actorUuid === actor.uuid || t.actorId === actor.id)) ?? null;
-    const trade = savedTrade ? { ...savedTrade, requestSummary: [...(savedTrade.items ?? []).map(i => `${i.quantity} × ${i.name}`), ...(savedTrade.gold ? [`${savedTrade.gold} GP`] : [])].join(" and ") } : null;
+    const trade = savedTrade ? { ...savedTrade, sellerSummary: (savedTrade.sellerItems?.length ? savedTrade.sellerItems : [{ name: savedTrade.itemName, quantity: savedTrade.quantity }]).map(i => `${i.quantity} × ${i.name}`).join(", "), requestSummary: [...(savedTrade.items ?? []).map(i => `${i.quantity} × ${i.name}`), ...(savedTrade.gold ? [`${savedTrade.gold} GP`] : [])].join(" and ") } : null;
     const sellItem = this.sellDraft ?? (trade ? { itemId: trade.itemId, name: trade.itemName, img: trade.itemImg, max: actor?.items.get(trade.itemId) ? itemQuantity(actor.items.get(trade.itemId)) : trade.quantity, quantity: trade.quantity } : null);
     const merchantItems = (shop?.till?.items ?? []).filter(i => number(i.quantity) > 0).map(i => ({ ...i, asked: trade?.items?.find(a => a.reserveId === i.id)?.quantity ?? 0 }));
     return {
@@ -600,11 +592,15 @@ class ShopManager extends HandlebarsApplicationMixin(ApplicationV2) {
     const shop = all.find(s => s.id === this.shopId) ?? all[0] ?? null;
     if (shop) this.shopId = shop.id;
     const offers = (shop?.offers ?? []).map(o => ({ ...o, summary: [...o.items.map(i => `${i.quantity} × ${i.name}`), ...(o.gold ? [`${o.gold} GP`] : [])].join(", ") }));
-    const gmActor = game.user.character ?? canvas?.tokens?.controlled?.[0]?.actor ?? null;
     const transferableTypes = new Set(["weapon", "equipment", "consumable", "tool", "loot", "container", "backpack"]);
-    const gmItems = (gmActor?.items ?? []).filter(i => itemQuantity(i) > 0 && transferableTypes.has(i.type)).map(i => { const containerId = foundry.utils.getProperty(i, "system.container"); const container = containerId ? gmActor.items.get(typeof containerId === "string" ? containerId : containerId?.id) : null; return { id: i.id, actorUuid: gmActor.uuid, name: i.name, img: i.img, quantity: itemQuantity(i), containerName: container?.name ?? "Carried" }; });
-    const trades = (shop?.trades ?? []).map(t => ({ ...t, pending: t.status === "pending", counter: t.status === "counter", requestSummary: [...(t.items ?? []).map(i => `${i.quantity} × ${i.name}`), ...(t.gold ? [`${t.gold} GP`] : [])].join(" and "), reserveChoices: (shop?.till?.items ?? []).filter(i => number(i.quantity) > 0).map(i => ({ ...i, selected: t.items?.find(a => a.source !== "actor" && a.reserveId === i.id)?.quantity ?? 0 })), gmChoices: gmActor?.uuid === t.actorUuid ? [] : gmItems.map(i => ({ ...i, selected: t.items?.find(a => a.source === "actor" && a.itemId === i.id)?.quantity ?? 0 })) }));
-    return { shops: all, shop, offers, trades, gmActor, users: game.users.filter(u => !u.isGM).map(u => ({ id: u.id, name: u.name, checked: shop?.users?.includes(u.id) })) };
+    const trades = await Promise.all((shop?.trades ?? []).map(async t => {
+      const seller = t.actorUuid ? await fromUuid(t.actorUuid) : game.actors.get(t.actorId);
+      const selectedSellerItems = t.sellerItems?.length ? t.sellerItems : [{ itemId: t.itemId, quantity: t.quantity }];
+      const sellerChoices = (seller?.items ?? []).filter(i => itemQuantity(i) > 0 && transferableTypes.has(i.type)).map(i => { const containerId = foundry.utils.getProperty(i, "system.container"); const container = containerId ? seller.items.get(typeof containerId === "string" ? containerId : containerId?.id) : null; return { id: i.id, name: i.name, img: i.img, quantity: itemQuantity(i), containerName: container?.name ?? "Carried", selected: selectedSellerItems.find(line => line.itemId === i.id)?.quantity ?? 0 }; });
+      const sellerSummary = selectedSellerItems.map(line => `${line.quantity} × ${seller?.items.get(line.itemId)?.name ?? line.name ?? "Item"}`).join(", ");
+      return { ...t, pending: t.status === "pending", counter: t.status === "counter", sellerSummary, requestSummary: [...(t.items ?? []).map(i => `${i.quantity} × ${i.name}`), ...(t.gold ? [`${t.gold} GP`] : [])].join(" and "), reserveChoices: (shop?.till?.items ?? []).filter(i => number(i.quantity) > 0).map(i => ({ ...i, selected: t.items?.find(a => a.reserveId === i.id)?.quantity ?? 0 })), sellerChoices };
+    }));
+    return { shops: all, shop, offers, trades, users: game.users.filter(u => !u.isGM).map(u => ({ id: u.id, name: u.name, checked: shop?.users?.includes(u.id) })) };
   }
   static windowClose() { this.close(); }
   static windowMinimize() { this.minimize(); }
@@ -650,7 +646,7 @@ class ShopManager extends HandlebarsApplicationMixin(ApplicationV2) {
   static denyOffer(event, target) { const offer = shops().find(s => s.id === this.shopId)?.offers.find(o => o.id === target.dataset.offerId); if (offer) gmMessage({ action: "denyOffer", userId: offer.userId, shopId: this.shopId, offerId: offer.id }); }
   static acceptTrade(event, target) { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.id === target.dataset.tradeId); if (trade) gmMessage({ action: "acceptTrade", userId: trade.userId, shopId: this.shopId, tradeId: trade.id }); }
   static rejectTrade(event, target) { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.id === target.dataset.tradeId); if (trade) gmMessage({ action: "rejectTrade", userId: trade.userId, shopId: this.shopId, tradeId: trade.id }); }
-  static counterTrade(event, target) { const card = target.closest("[data-trade-card]"); const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.id === target.dataset.tradeId); if (!card || !trade) return; const saleQuantity = Math.max(1, Math.floor(number(card.querySelector("[data-counter-sale-quantity]")?.value, trade.quantity))); const gold = Math.max(0, Math.floor(number(card.querySelector("[data-counter-gold]")?.value, 0))); const shopItems = [...card.querySelectorAll("[data-counter-reserve]")].map(i => ({ source: "shop", reserveId: i.dataset.counterReserve, name: i.dataset.name, quantity: number(i.value) })).filter(i => i.quantity > 0); const actorItems = [...card.querySelectorAll("[data-counter-actor-item]")].map(i => ({ source: "actor", actorUuid: i.dataset.actorUuid, itemId: i.dataset.counterActorItem, name: i.dataset.name, quantity: number(i.value) })).filter(i => i.quantity > 0); gmMessage({ action: "counterTrade", userId: trade.userId, shopId: this.shopId, tradeId: trade.id, saleQuantity, gold, items: [...shopItems, ...actorItems] }); }
+  static counterTrade(event, target) { const card = target.closest("[data-trade-card]"); const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.id === target.dataset.tradeId); if (!card || !trade) return; const gold = Math.max(0, Math.floor(number(card.querySelector("[data-counter-gold]")?.value, 0))); const shopItems = [...card.querySelectorAll("[data-counter-reserve]")].map(i => ({ source: "shop", reserveId: i.dataset.counterReserve, name: i.dataset.name, quantity: number(i.value) })).filter(i => i.quantity > 0); const sellerItems = [...card.querySelectorAll("[data-counter-seller-item]")].map(i => ({ itemId: i.dataset.counterSellerItem, name: i.dataset.name, quantity: number(i.value) })).filter(i => i.quantity > 0); gmMessage({ action: "counterTrade", userId: trade.userId, shopId: this.shopId, tradeId: trade.id, gold, items: shopItems, sellerItems }); }
   static abandonTrade(event, target) { const trade = shops().find(s => s.id === this.shopId)?.trades.find(t => t.id === target.dataset.tradeId); if (trade) gmMessage({ action: "abandonTrade", userId: trade.userId, shopId: this.shopId, tradeId: trade.id }); }
   static async save() {
     const form = this.element.querySelector("form"); const fd = new FormData(form); const all = shops(); const shop = all.find(s => s.id === this.shopId); if (!shop) return;
