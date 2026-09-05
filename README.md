@@ -1,5 +1,10 @@
 # Tely's Barter Shops
 
+## 0.8.1
+
+- Player negotiations show offerable shop items and barter currencies without revealing quantities.
+- Requests may exceed merchant holdings, but the GM cannot accept them as written and sees a private shortage warning.
+
 ## 0.8.0
 
 - Player counteroffers now reopen with the GM's latest terms and allow further edits.

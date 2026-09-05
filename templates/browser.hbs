@@ -20,7 +20,7 @@
           <div class="tbs-counter-items">{{#each actorChoices}}<label><span><img src="{{img}}">{{name}} <small>{{quantity}} owned · {{containerName}}</small></span><input type="number" data-player-seller-item="{{id}}" data-name="{{name}}" min="0" max="{{quantity}}" value="{{selected}}"></label>{{else}}<p class="tbs-muted">No transferable items are available.</p>{{/each}}</div>
           <h2 class="tbs-section-title">2. What you want from the shop</h2>
           <div class="tbs-ask-grid"><label class="tbs-ask-currency"><span><i class="fa-solid fa-coins"></i> Gold requested</span><input type="number" data-player-counter-gold min="0" value="{{askedGold}}"></label>
-            {{#each shopOfferItems}}<label class="tbs-ask-currency"><span><img src="{{img}}" alt="">{{name}}</span><small>{{available}} in public stock</small><input type="number" data-player-shop-item="{{id}}" min="0" max="{{max}}" value="{{asked}}"></label>{{/each}}
+            {{#each shopOfferItems}}<label class="tbs-ask-currency"><span><img src="{{img}}" alt="">{{name}}</span><small>{{kind}} · quantity unknown</small><input type="number" data-player-shop-item="{{refId}}" data-offer-source="{{source}}" min="0" value="{{asked}}"></label>{{/each}}
           </div>
           <div class="tbs-trade-actions"><button class="primary" type="button" data-action="submitPlayerCounter"><i class="fa-solid fa-paper-plane"></i> Send Counteroffer</button><button class="danger" type="button" data-action="abandonTrade"><i class="fa-solid fa-ban"></i> Abort Trade</button></div>
         {{else if tradePending}}
@@ -35,7 +35,7 @@
           </div>
           <h2 class="tbs-section-title">2. What do you want in return?</h2>
           <div class="tbs-ask-grid"><label class="tbs-ask-currency"><span><i class="fa-solid fa-coins"></i> Gold</span><input type="number" data-ask-gold min="0" value="{{askedGold}}"></label>
-            {{#each shopOfferItems}}<label class="tbs-ask-currency"><span><img src="{{img}}" alt="">{{name}}</span><small>{{available}} in public stock</small><input type="number" data-ask-listing-id="{{id}}" min="0" max="{{max}}" value="{{asked}}"></label>{{else}}<p class="tbs-muted">This merchant has no public shop items available.</p>{{/each}}
+            {{#each shopOfferItems}}<label class="tbs-ask-currency"><span><img src="{{img}}" alt="">{{name}}</span><small>{{kind}} · quantity unknown</small><input type="number" data-ask-shop-item="{{refId}}" data-offer-source="{{source}}" min="0" value="{{asked}}"></label>{{else}}<p class="tbs-muted">This merchant has no items available to request.</p>{{/each}}
           </div>
           <div class="tbs-trade-actions"><button class="primary" type="button" data-action="submitTrade" {{#unless actor}}disabled{{/unless}}><i class="fa-solid fa-paper-plane"></i> Submit Offer</button><button class="danger" type="button" data-action="abandonTrade"><i class="fa-solid fa-ban"></i> Abandon Trade</button></div>
         {{/if}}
