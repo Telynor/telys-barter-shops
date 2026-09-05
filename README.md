@@ -34,6 +34,7 @@ For local testing, copy the `telys-barter-shops` folder into Foundry's `Data/mod
 - The dedicated Sell screen accepts a dragged inventory Item and lets the player request merchant gold and/or custom currency Items, limited by the merchant's current reserves.
 - Player sales are negotiations: rejection returns the unchanged proposal for editing, acceptance moves both sides of the trade, and either side can abandon without moving anything.
 - Sale proposals automatically open the GM review screen. The GM can accept as written or counter with shop reserves plus items carried by their selected or assigned character, including items stored in containers; counteroffers automatically reopen on the player screen.
+- Merchant-side character Items are removed before delivery and can never come from the seller's Actor. Received barter currency and sold stock merge into existing like-name/type stacks instead of creating duplicates.
 - Purchase and sale requests are validated and executed by the active GM client.
 
 ## Release packaging
