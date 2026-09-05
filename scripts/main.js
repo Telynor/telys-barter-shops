@@ -12,7 +12,7 @@ const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(
 const quantityPath = item => foundry.utils.hasProperty(item, "system.quantity") ? "system.quantity" : null;
 const itemQuantity = item => Math.max(0, number(foundry.utils.getProperty(item, "system.quantity"), 1));
 const currency = actor => clone(foundry.utils.getProperty(actor, "system.currency") ?? {});
-const actorForUser = user => user.character ?? canvas?.tokens?.controlled?.[0]?.actor ?? null;
+const actorForUser = user => canvas?.tokens?.controlled?.[0]?.actor ?? user.character ?? null;
 const canAccess = (shop, user) => user.isGM || shop.access === "all" || (shop.users ?? []).includes(user.id);
 
 function blankShop() {
@@ -30,6 +30,10 @@ function normalizeShop(shop) {
   shop.till.currency ||= { gp: 1000 };
   shop.till.items ||= [];
   shop.listings ||= [];
+  for (const listing of shop.listings) {
+    listing.payment ||= "barter";
+    listing.cost ||= { amount: 0, denomination: "gp", quantity: 1, name: "", type: "", uuid: "", img: "" };
+  }
   return shop;
 }
 
@@ -50,7 +54,8 @@ function affordableCurrency(actor, denomination, total) {
 
 function matchingItems(actor, cost) {
   return actor.items.filter(i => {
-    if (cost.uuid && i.flags?.[MODULE_ID]?.sourceUuid === cost.uuid) return true;
+    const sourceIds = [i.flags?.[MODULE_ID]?.sourceUuid, i.flags?.core?.sourceId, i._stats?.compendiumSource, i._stats?.duplicateSource].filter(Boolean);
+    if (cost.uuid && sourceIds.includes(cost.uuid)) return true;
     return i.name.trim().toLowerCase() === String(cost.name ?? "").trim().toLowerCase()
       && (!cost.type || i.type === cost.type);
   });
@@ -106,6 +111,7 @@ function addToTill(shop, cost, quantity, source = null) {
 
 function listingCostText(listing) {
   if (listing.payment === "barter") return `${listing.cost.quantity} × ${listing.cost.name}`;
+  if (listing.payment === "both") return `${listing.cost.quantity} × ${listing.cost.name} or ${listing.cost.amount} ${String(listing.cost.denomination).toUpperCase()}`;
   return `${listing.cost.amount} ${String(listing.cost.denomination).toUpperCase()}`;
 }
 
@@ -132,29 +138,40 @@ async function handlePurchase(message) {
   if (!user.isGM && !actor.testUserPermission(user, "OWNER")) throw new Error("You do not own that character.");
   if (!shop.open || !canAccess(shop, user)) throw new Error("This shop is closed or unavailable.");
   if (listing.stock !== null && number(listing.stock) < count) throw new Error("Not enough stock remains.");
-  if (listing.payment === "currency") {
+  const allowed = ["barter", "currency", "both"].includes(listing.payment) ? listing.payment : "barter";
+  const payment = allowed === "both" ? String(message.payment || "barter") : allowed;
+  if (!(["barter", "currency"].includes(payment)) || (allowed !== "both" && payment !== allowed)) throw new Error("That payment method is not allowed for this listing.");
+  let refund = null;
+  if (payment === "currency") {
     const total = Math.ceil(number(listing.cost.amount) * number(shop.markup, 1) * count);
     if (!affordableCurrency(actor, listing.cost.denomination, total)) throw new Error("You cannot afford that purchase.");
     const current = number(foundry.utils.getProperty(actor, `system.currency.${listing.cost.denomination}`));
     await actor.update({ [`system.currency.${listing.cost.denomination}`]: current - total });
     shop.till.currency[listing.cost.denomination] = number(shop.till.currency[listing.cost.denomination]) + total;
+    refund = async () => {
+      const balance = number(foundry.utils.getProperty(actor, `system.currency.${listing.cost.denomination}`));
+      await actor.update({ [`system.currency.${listing.cost.denomination}`]: balance + total });
+      shop.till.currency[listing.cost.denomination] = Math.max(0, number(shop.till.currency[listing.cost.denomination]) - total);
+    };
   } else {
     const needed = number(listing.cost.quantity, 1) * count;
+    if (!listing.cost.uuid && !listing.cost.name) throw new Error("The GM has not assigned a barter currency item to this listing.");
     const matches = matchingItems(actor, listing.cost);
     if (matches.reduce((sum, item) => sum + itemQuantity(item), 0) < needed) throw new Error("You do not have enough barter items.");
     const paidSource = matches[0];
+    const refundSource = { ...itemSource(paidSource), uuid: listing.cost.uuid || paidSource.uuid };
     await removeItemQuantity(actor, matches, needed);
     addToTill(shop, listing.cost, needed, paidSource);
+    refund = async () => {
+      await addItemQuantity(actor, refundSource, needed);
+      const till = tillItem(shop, listing.cost);
+      if (till) till.quantity = Math.max(0, number(till.quantity) - needed);
+    };
   }
   try {
     await addItemQuantity(actor, listing.item, number(listing.bundle, 1) * count);
   } catch (error) {
-    if (listing.payment === "currency") {
-      const total = Math.ceil(number(listing.cost.amount) * number(shop.markup, 1) * count);
-      const current = number(foundry.utils.getProperty(actor, `system.currency.${listing.cost.denomination}`));
-      await actor.update({ [`system.currency.${listing.cost.denomination}`]: current + total });
-      shop.till.currency[listing.cost.denomination] = Math.max(0, number(shop.till.currency[listing.cost.denomination]) - total);
-    }
+    await refund?.();
     throw error;
   }
   if (listing.stock !== null) listing.stock = number(listing.stock) - count;
@@ -217,7 +234,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
     const actor = actorForUser(game.user);
     return {
       shops: available.map(s => ({ ...s, closed: !s.open, cardImage: s.vendorImage || s.image })), shop,
-      listings: (shop?.listings ?? []).map(l => ({ ...l, costText: listingCostText(l), soldOut: l.stock !== null && number(l.stock) <= 0 })),
+      listings: (shop?.listings ?? []).map(l => ({ ...l, costText: listingCostText(l), showPaymentChoice: l.payment === "both", soldOut: l.stock !== null && number(l.stock) <= 0, quantityOptions: Array.from({ length: Math.min(10, l.stock === null ? 10 : Math.max(1, number(l.stock))) }, (_, i) => i + 1) })),
       actor, inventory: actor?.items.filter(i => itemQuantity(i) > 0).map(i => ({ id: i.id, name: i.name, img: i.img, quantity: itemQuantity(i), value: number(foundry.utils.getProperty(i, "system.price.value")) })) ?? [],
       canSell: !!shop?.buyback?.enabled, tileSize: shop?.tileSize ?? 220,
       merchantCoins: Object.entries(shop?.till?.currency ?? {}).filter(([, value]) => number(value) > 0).map(([key, value]) => ({ key: key.toUpperCase(), value })),
@@ -232,10 +249,14 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
     const actor = actorForUser(game.user);
     if (!actor) return ui.notifications.warn("Select a token or assign a character first.");
     const listing = shops().find(s => s.id === this.shopId)?.listings.find(l => l.id === target.dataset.listingId);
-    const max = listing?.stock === null ? 99 : Math.max(1, number(listing?.stock, 1));
-    const quantity = await DialogV2.prompt({ window: { title: "Purchase" }, content: `<label>Quantity <input type="number" name="quantity" min="1" max="${max}" value="1"></label>`, ok: { label: "Buy", callback: (event, button, dialog) => number(new FormData(dialog.form).get("quantity"), 1) } });
-    if (!quantity) return;
-    sendRequest({ action: "purchase", userId: game.user.id, actorId: actor.id, shopId: this.shopId, listingId: target.dataset.listingId, quantity });
+    if (!listing) return ui.notifications.error("That listing no longer exists.");
+    const card = target.closest(".tbs-product");
+    const shortcut = Math.floor(number(card?.querySelector("[data-bulk-quantity]")?.value, 0));
+    const selected = Math.floor(number(card?.querySelector("[data-quantity-select]")?.value, 1));
+    const quantity = Math.max(1, shortcut || selected);
+    if (listing.stock !== null && quantity > number(listing.stock)) return ui.notifications.warn(`Only ${listing.stock} remain in stock.`);
+    const payment = card?.querySelector("[data-payment-select]")?.value || listing.payment;
+    sendRequest({ action: "purchase", userId: game.user.id, actorId: actor.id, shopId: this.shopId, listingId: target.dataset.listingId, quantity, payment });
     ui.notifications.info("Purchase request sent.");
   }
   static async sell(event, target) {
@@ -288,10 +309,10 @@ class ShopManager extends HandlebarsApplicationMixin(ApplicationV2) {
       const listing = shop.listings.find(l => l.id === costTarget.dataset.costListingId);
       if (!listing) return;
       listing.payment = "barter";
-      listing.cost = { ...listing.cost, name: item.name, type: item.type, uuid: item.uuid, quantity: Math.max(1, number(listing.cost?.quantity, 1)) };
+      listing.cost = { ...listing.cost, name: item.name, type: item.type, uuid: item.uuid, img: item.img, quantity: Math.max(1, number(listing.cost?.quantity, 1)) };
       await saveShops(all); this.render({ force: true }); return;
     }
-    shop.listings.push({ id: uid(), item: { ...itemSource(item), uuid: item.uuid }, bundle: 1, stock: null, payment: "currency", cost: { amount: number(item.system?.price?.value, 1) || 1, denomination: item.system?.price?.denomination ?? "gp", quantity: 1, name: "", type: "", uuid: "" } });
+    shop.listings.push({ id: uid(), item: { ...itemSource(item), uuid: item.uuid }, bundle: 1, stock: null, payment: "barter", cost: { amount: number(item.system?.price?.value, 1) || 1, denomination: item.system?.price?.denomination ?? "gp", quantity: 1, name: "", type: "", uuid: "", img: "" } });
     await saveShops(all); this.render({ force: true });
   }
   static async create() { const all = shops(); const shop = blankShop(); all.push(shop); await saveShops(all); this.shopId = shop.id; this.render({ force: true }); }
@@ -312,7 +333,7 @@ class ShopManager extends HandlebarsApplicationMixin(ApplicationV2) {
     for (const listing of shop.listings) {
       const p = `listing.${listing.id}.`; listing.bundle = Math.max(1, number(fd.get(p + "bundle"), 1));
       const stockRaw = String(fd.get(p + "stock") ?? "").trim(); listing.stock = stockRaw === "" ? null : Math.max(0, Math.floor(number(stockRaw)));
-      listing.payment = String(fd.get(p + "payment") || "currency"); listing.cost.amount = Math.max(0, number(fd.get(p + "amount"))); listing.cost.denomination = String(fd.get(p + "denomination") || "gp"); listing.cost.quantity = Math.max(1, number(fd.get(p + "quantity"), 1)); listing.cost.name = String(fd.get(p + "costName") || ""); listing.cost.type = String(fd.get(p + "costType") || "");
+      listing.payment = String(fd.get(p + "payment") || "barter"); listing.cost.amount = Math.max(0, number(fd.get(p + "amount"))); listing.cost.denomination = String(fd.get(p + "denomination") || "gp"); listing.cost.quantity = Math.max(1, number(fd.get(p + "quantity"), 1)); listing.cost.name = String(fd.get(p + "costName") || ""); listing.cost.type = String(fd.get(p + "costType") || "");
     }
     await saveShops(all); ui.notifications.info("Shop saved."); this.render({ force: true });
   }
