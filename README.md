@@ -40,6 +40,7 @@ For local testing, copy the `telys-barter-shops` folder into Foundry's `Data/mod
 - The native Foundry title bar is hidden while module windows are open; minimized windows use a compact, stylized title strip for restoring and closing.
 - When a merchant buys a new Item using custom loot currency, that loot Item automatically becomes the new listing's barter currency. Its resale quantity is the amount paid per acquired unit multiplied by shop markup; matching existing listings keep their established price.
 - Open module windows retain a transparent ten-pixel Foundry header along their top edge, allowing normal click-and-drag movement without restoring the visible black title bar.
+- Player counteroffers use a dedicated revision action that preserves the same negotiation record; only Abort/Abandon removes an active trade.
 - Purchase and sale requests are validated and executed by the active GM client.
 
 ## Release packaging
