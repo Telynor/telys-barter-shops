@@ -38,6 +38,7 @@ For local testing, copy the `telys-barter-shops` folder into Foundry's `Data/mod
 - Purchased Items receive a minimum nonzero per-item price calculated from the currency or barter value paid and the shop markup, preventing zero-value quick-buyback loops.
 - Items bought from players merge into matching finite-stock shop listings without changing the existing listing price. New listings use a currency sale price derived from the merchant's total payment times the configured markup.
 - The native Foundry title bar is hidden while module windows are open; minimized windows use a compact, stylized title strip for restoring and closing.
+- When a merchant buys a new Item using custom loot currency, that loot Item automatically becomes the new listing's barter currency. Its resale quantity is the amount paid per acquired unit multiplied by shop markup; matching existing listings keep their established price.
 - Purchase and sale requests are validated and executed by the active GM client.
 
 ## Release packaging
