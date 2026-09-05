@@ -8,20 +8,42 @@
       {{else}}<div class="tbs-empty"><i class="fa-solid fa-store-slash"></i><h2>No shops available</h2><p>A Game Master can grant you access from the shop manager.</p></div>{{/each}}
     </div>
   {{else}}
-    <div class="tbs-shop-banner" style="background-image:url('{{shop.image}}')"></div>
-    <header class="tbs-shop-header"><button type="button" data-action="back" aria-label="Back"><i class="fa-solid fa-arrow-left"></i></button><img class="tbs-vendor-image" src="{{shop.vendorImage}}" alt="Vendor"><div class="tbs-shop-copy"><span class="tbs-kicker">{{#if shop.open}}OPEN{{else}}CLOSED{{/if}}</span><h1>{{shop.name}}</h1><p>{{shop.description}}</p></div>{{#if actor}}<div class="tbs-wallet"><small>Shopping as</small><strong>{{actor.name}}</strong></div>{{/if}}</header>
-    <div class="tbs-merchant-reserves"><strong>Merchant reserves</strong>{{#each merchantCoins}}<span>{{value}} {{key}}</span>{{/each}}{{#each merchantItems}}<span><img src="{{img}}">{{quantity}} × {{name}}</span>{{/each}}</div>
-    {{#unless shop.open}}<div class="tbs-closed-banner"><i class="fa-solid fa-lock"></i> This shop is currently closed.</div>{{/unless}}
-    <h2 class="tbs-section-title">Shop Inventory</h2>
-    <div class="tbs-product-grid" style="--tile-size: {{tileSize}}px">
+    {{#if sellMode}}
+      <section class="tbs-sell-screen">
+        <header class="tbs-shop-header"><button type="button" data-action="backToShop" aria-label="Back to shop"><i class="fa-solid fa-arrow-left"></i></button><img class="tbs-vendor-image" src="{{shop.vendorImage}}" alt="Vendor"><div class="tbs-shop-copy"><span class="tbs-kicker">SALE NEGOTIATION</span><h1>Sell to {{shop.name}}</h1><p>{{#if actor}}{{actor.name}} is making this offer.{{else}}Select a token or assign a character first.{{/if}}</p></div></header>
+        {{#if tradePending}}
+          <div class="tbs-trade-status"><i class="fa-solid fa-hourglass-half"></i><div><strong>Waiting for the GM</strong><p>{{trade.quantity}} × {{trade.itemName}} for {{#if trade.requestSummary}}{{trade.requestSummary}}{{else}}your requested payment{{/if}}.</p></div></div>
+          <div class="tbs-trade-actions"><button class="danger" type="button" data-action="abandonTrade"><i class="fa-solid fa-ban"></i> Abandon Trade</button></div>
+        {{else}}
+          {{#if tradeRevision}}<div class="tbs-revision-banner"><i class="fa-solid fa-rotate-left"></i> The GM said no. Nothing was moved. Adjust the offer below and submit it again.</div>{{/if}}
+          <h2 class="tbs-section-title">1. What are you selling?</h2>
+          <div class="tbs-sell-drop">
+            {{#if sellItem}}<div class="tbs-sell-item"><img src="{{sellItem.img}}" alt="{{sellItem.name}}"><div><strong>{{sellItem.name}}</strong><small>You own {{sellItem.max}}</small></div><label>Quantity<input type="number" data-sell-quantity min="1" max="{{sellItem.max}}" value="{{sellItem.quantity}}"></label><button class="danger" type="button" data-action="clearSellItem" title="Remove item"><i class="fa-solid fa-xmark"></i></button></div>
+            {{else}}<div class="tbs-drop"><i class="fa-solid fa-hand-holding-box"></i><strong>Drag an item from {{actor.name}}'s inventory here</strong><small>No item leaves the character until the GM accepts.</small></div>{{/if}}
+          </div>
+          <h2 class="tbs-section-title">2. What do you want in return?</h2>
+          <div class="tbs-ask-grid"><label class="tbs-ask-currency"><span><i class="fa-solid fa-coins"></i> Gold</span><small>Merchant has {{shop.till.currency.gp}} GP</small><input type="number" data-ask-gold min="0" max="{{shop.till.currency.gp}}" value="{{askedGold}}"></label>
+            {{#each merchantItems}}<label class="tbs-ask-currency"><span><img src="{{img}}" alt="">{{name}}</span><small>Merchant has {{quantity}}</small><input type="number" data-ask-reserve-id="{{id}}" min="0" max="{{quantity}}" value="{{asked}}"></label>{{else}}<p class="tbs-muted">This merchant has no custom currency items available.</p>{{/each}}
+          </div>
+          <div class="tbs-trade-actions"><button class="primary" type="button" data-action="submitTrade" {{#unless actor}}disabled{{/unless}}><i class="fa-solid fa-paper-plane"></i> Submit Offer</button><button class="danger" type="button" data-action="abandonTrade"><i class="fa-solid fa-ban"></i> Abandon Trade</button></div>
+        {{/if}}
+      </section>
+    {{else}}
+      <div class="tbs-shop-banner" style="background-image:url('{{shop.image}}')"></div>
+      <header class="tbs-shop-header"><button type="button" data-action="back" aria-label="Back"><i class="fa-solid fa-arrow-left"></i></button><img class="tbs-vendor-image" src="{{shop.vendorImage}}" alt="Vendor"><div class="tbs-shop-copy"><span class="tbs-kicker">{{#if shop.open}}OPEN{{else}}CLOSED{{/if}}</span><h1>{{shop.name}}</h1><p>{{shop.description}}</p></div>{{#if actor}}<div class="tbs-wallet"><small>Shopping as</small><strong>{{actor.name}}</strong></div>{{/if}}</header>
+      <div class="tbs-merchant-reserves"><strong>Merchant reserves</strong>{{#each merchantCoins}}<span>{{value}} {{key}}</span>{{/each}}{{#each merchantItems}}<span><img src="{{img}}">{{quantity}} × {{name}}</span>{{/each}}</div>
+      {{#unless shop.open}}<div class="tbs-closed-banner"><i class="fa-solid fa-lock"></i> This shop is currently closed.</div>{{/unless}}
+      <h2 class="tbs-section-title">Shop Inventory</h2>
+      <div class="tbs-product-grid" style="--tile-size: {{tileSize}}px">
       {{#each listings}}<article class="tbs-product {{#if soldOut}}is-sold{{/if}}"><div class="tbs-product-image"><img src="{{item.img}}" alt="{{item.name}}"></div><div class="tbs-product-body"><h3 title="{{item.name}}">{{item.name}}</h3><div class="tbs-meta"><span>{{#if isBestOffer}}Best Offer{{else}}{{costText}}{{/if}}</span><span>{{#if stock}}{{stock}} in stock{{else}}{{#if soldOut}}Sold out{{else}}Unlimited stock{{/if}}{{/if}}</span></div>
         <div class="tbs-buy-controls"><label class="tbs-buy-field">Quantity wanted<select data-quantity-select>{{#each quantityOptions}}<option value="{{this}}">{{this}}</option>{{/each}}</select></label><label class="tbs-buy-field">Bulk shortcut<input type="number" data-bulk-quantity min="1" {{#if stock}}max="{{stock}}"{{/if}} placeholder="Type amount"></label></div>
         {{#if isBestOffer}}<div class="tbs-offer-drop" data-offer-listing-id="{{id}}"><strong>Drag loot items here</strong>{{#each draftItems}}<div class="tbs-offer-item"><img src="{{img}}"><span>{{name}}</span><input type="number" min="1" max="{{max}}" value="{{quantity}}" data-offer-item-id="{{itemId}}"><button type="button" data-action="removeOfferItem" data-listing-id="{{../id}}" data-item-id="{{itemId}}"><i class="fa-solid fa-xmark"></i></button></div>{{/each}}</div><label class="tbs-buy-field">Gold offered<input type="number" min="0" value="0" data-offer-gold></label><button type="button" data-action="submitOffer" data-listing-id="{{id}}" {{#if ../shop.open}}{{else}}disabled{{/if}} {{#if soldOut}}disabled{{/if}}><i class="fa-solid fa-handshake"></i> Submit Best Offer</button>
         {{else}}{{#if showPaymentChoice}}<label class="tbs-buy-field">Pay with<select data-payment-select><option value="barter">{{cost.quantity}} × {{cost.name}}</option><option value="currency">{{cost.amount}} {{cost.denomination}}</option></select></label>{{/if}}<button type="button" data-action="buy" data-listing-id="{{id}}" {{#if ../shop.open}}{{else}}disabled{{/if}} {{#if soldOut}}disabled{{/if}}><i class="fa-solid fa-bag-shopping"></i> Buy {{bundle}} each</button>{{/if}}
       </div></article>
       {{else}}<div class="tbs-empty"><p>This merchant has no items for sale.</p></div>{{/each}}
-    </div>
-    {{#if canSell}}<h2 class="tbs-section-title">Sell to {{shop.name}}</h2><div class="tbs-inventory-list">{{#each inventory}}<div><img src="{{img}}"><span><strong>{{name}}</strong><small>Owned: {{quantity}} · Base value: {{value}}</small></span><button type="button" data-action="sell" data-item-id="{{id}}" {{#unless ../../shop.open}}disabled{{/unless}}>Sell</button></div>{{else}}<p>No items available to sell.</p>{{/each}}</div>{{/if}}
+      </div>
+      {{#if canSell}}<div class="tbs-open-sell"><button class="primary" type="button" data-action="openSell" {{#unless shop.open}}disabled{{/unless}}><i class="fa-solid fa-handshake"></i> Sell or Propose a Trade</button><small>Drag one inventory item into a private offer and ask the merchant for gold or custom currency.</small></div>{{/if}}
+    {{/if}}
   {{/unless}}
 </div>
 </div>
