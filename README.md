@@ -31,6 +31,8 @@ For local testing, copy the `telys-barter-shops` folder into Foundry's `Data/mod
 - Module sockets are explicitly enabled, and transactions use the selected Actor's full UUID so player purchases and synthetic-token inventories reach the GM correctly.
 - Price markup applies to currency purchases. `1.25` means 25% above the listed price.
 - Buyback pays a percentage of an item's D&D 5e `system.price.value` into the configured denomination.
+- The dedicated Sell screen accepts a dragged inventory Item and lets the player request merchant gold and/or custom currency Items, limited by the merchant's current reserves.
+- Player sales are negotiations: rejection returns the unchanged proposal for editing, acceptance moves both sides of the trade, and either side can abandon without moving anything.
 - Purchase and sale requests are validated and executed by the active GM client.
 
 ## Release packaging
