@@ -1,5 +1,9 @@
 # Tely's Barter Shops
 
+## 0.8.4
+
+- The sell/barter helper text now sits centered beneath the offer button instead of being squeezed into a narrow side column.
+
 ## 0.8.3
 
 - Items received from players that match a currency registered to the shop now increase that private reserve instead of becoming public merchandise.
