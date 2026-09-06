@@ -1,5 +1,10 @@
 # Tely's Barter Shops
 
+## 0.8.3
+
+- Items received from players that match a currency registered to the shop now increase that private reserve instead of becoming public merchandise.
+- The final accepted offer quantities determine exactly how much currency is added.
+
 ## 0.8.2
 
 - Offer and counteroffer windows close automatically after successful submission.

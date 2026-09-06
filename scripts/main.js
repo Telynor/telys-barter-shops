@@ -530,7 +530,9 @@ async function handleTradeDecision(message, decision) {
   const primaryBarterPaid = primaryBarter ? payouts.filter(p => (p.reserve?.id ?? p.listing?.id) === (primaryBarter.reserve?.id ?? primaryBarter.listing?.id)).reduce((sum, p) => sum + p.asked.quantity, 0) : 0;
   const barterCost = primaryBarter ? { quantity: Math.max(1, Math.ceil(primaryBarterPaid * number(shop.markup, 1) / Math.max(1, purchasedUnits))), name: primaryBarter.asked.name, type: primaryBarter.asked.type, uuid: primaryBarter.asked.uuid, img: primaryBarter.asked.img } : null;
   for (const sale of saleLines) {
-    addPurchasedStock(shop, sale.source, sale.line.quantity, resalePrice, "gp", barterCost);
+    const registeredCurrency = tillItem(shop, sale.source);
+    if (registeredCurrency) registeredCurrency.quantity = number(registeredCurrency.quantity) + sale.line.quantity;
+    else addPurchasedStock(shop, sale.source, sale.line.quantity, resalePrice, "gp", barterCost);
   }
   shop.trades = shop.trades.filter(t => t.id !== trade.id);
   await saveShops(all);
