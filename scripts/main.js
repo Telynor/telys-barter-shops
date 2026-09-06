@@ -675,9 +675,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
     const listing = shops().find(s => s.id === this.shopId)?.listings.find(l => l.id === target.dataset.listingId);
     if (!listing) return ui.notifications.error("That listing no longer exists.");
     const card = target.closest(".tbs-product");
-    const shortcut = Math.floor(number(card?.querySelector("[data-bulk-quantity]")?.value, 0));
-    const selected = Math.floor(number(card?.querySelector("[data-quantity-select]")?.value, 1));
-    const quantity = Math.max(1, shortcut || selected);
+    const quantity = Math.max(1, Math.floor(number(card?.querySelector("[data-quantity-input]")?.value, 1)));
     if (listing.stock !== null && quantity > number(listing.stock)) return ui.notifications.warn(`Only ${listing.stock} remain in stock.`);
     const payment = card?.querySelector("[data-payment-select]")?.value || listing.payment;
     sendRequest({ action: "purchase", userId: game.user.id, actorId: actor.id, actorUuid: actor.uuid, shopId: this.shopId, listingId: target.dataset.listingId, quantity, payment });
@@ -692,9 +690,7 @@ class ShopBrowser extends HandlebarsApplicationMixin(ApplicationV2) {
     if (!actor) return ui.notifications.warn("Select a character token or assign a character first.");
     const card = target.closest(".tbs-product");
     const listingId = target.dataset.listingId;
-    const shortcut = Math.floor(number(card?.querySelector("[data-bulk-quantity]")?.value, 0));
-    const selected = Math.floor(number(card?.querySelector("[data-quantity-select]")?.value, 1));
-    const quantity = Math.max(1, shortcut || selected);
+    const quantity = Math.max(1, Math.floor(number(card?.querySelector("[data-quantity-input]")?.value, 1)));
     const gold = Math.max(0, Math.floor(number(card?.querySelector("[data-offer-gold]")?.value, 0)));
     const draft = this.offerDrafts.get(listingId) ?? [];
     const items = draft.map(item => ({ itemId: item.itemId, name: item.name, quantity: Math.min(item.max, Math.max(1, Math.floor(number(card?.querySelector(`[data-offer-item-id="${item.itemId}"]`)?.value, 1)))) }));

@@ -1,5 +1,9 @@
 # Tely's Barter Shops
 
+## 0.8.5
+
+- Purchase quantity is now one editable dropdown field: select a suggested amount or type a custom amount in the same box.
+
 ## 0.8.4
 
 - The sell/barter helper text now sits centered beneath the offer button instead of being squeezed into a narrow side column.
